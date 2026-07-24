@@ -1,0 +1,1 @@
+- [Mengedegna backend architecture](mengedegna-backend.md) — custom Express API replacing Base44 BaaS; uses JSONB entity store + JWT auth.
