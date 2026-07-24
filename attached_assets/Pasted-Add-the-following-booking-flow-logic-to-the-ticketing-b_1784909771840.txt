@@ -1,0 +1,57 @@
+Add the following booking-flow logic to the ticketing/booking app in this
+project. Check whether a booking flow (operator selection, trip search,
+checkout) already exists before building new components — extend what's
+there rather than duplicating it.
+
+1. OPERATOR LIST ORDERING
+   Wherever transport operators/carriers are listed for the customer to
+   choose from (e.g. a dropdown or list of bus/transport companies), sort
+   them alphabetically by name. This should be the default sort everywhere
+   that list appears, not just on one screen.
+
+2. SEAT SELECTION BEFORE PAYMENT
+   After the customer picks a trip/operator and before they reach the
+   payment screen, show them a seat map or list of currently available
+   seats for that specific trip and require them to select one. The
+   customer must not be able to proceed to payment without a seat
+   selection. Once a seat is selected, hold/reserve it for that booking
+   attempt so two customers can't both pay for the same seat.
+
+3. DELIVERY METHOD CHOICE BEFORE PAYMENT
+   Also before payment, ask the customer how they want to receive their
+   ticket once it's confirmed. Two options:
+     a) Boarding-pass format — a formatted digital ticket similar to an
+        airline boarding pass (passenger name, trip/operator, date, time,
+        seat number, a QR/barcode, booking reference), viewable/downloadable
+        in-app or emailed as an image/PDF.
+     b) Text message — a concise SMS containing the essential details
+        (operator, date, time, seat number, booking reference).
+   Store this choice with the booking so it's available at the delivery
+   step.
+
+4. CORRECT ORDER OF OPERATIONS
+   The flow must be, in this order: browse operators (alphabetical) ->
+   pick trip -> select seat -> choose delivery method -> enter payment ->
+   process payment. Do not let the customer skip seat selection or
+   delivery-method choice to reach payment directly.
+
+5. TICKET DELIVERY ONLY AFTER PAYMENT IS VERIFIED
+   Do not generate or send the ticket at the moment payment is submitted.
+   Wait for confirmation from the payment provider/gateway that the
+   payment actually succeeded (not just that it was submitted) before:
+     - Finalizing the seat reservation as sold (not just held).
+     - Generating and sending the ticket in the format the customer chose
+       in step 3 (boarding pass or SMS).
+   If payment fails or is not confirmed, release the held seat back to
+   available inventory and do not send a ticket.
+
+6. EDGE CASES TO HANDLE
+   - Seat becomes unavailable between selection and payment (e.g. someone
+     else bought it first) — tell the customer and let them pick another
+     seat before payment, don't charge them for an unavailable seat.
+   - Customer abandons checkout after selecting a seat — release the held
+     seat after a reasonable timeout (e.g. 10-15 minutes) so it doesn't
+     stay artificially unavailable forever.
+
+Ask me before making changes that would require new payment provider
+credentials, SMS gateway credentials, or any paid third-party service.
