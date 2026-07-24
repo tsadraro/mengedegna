@@ -73,7 +73,7 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-6 lg:px-10">
           <SectionHeader kicker="THE FLEET" title="Operators We Power" sub="From Selam Bus to Velocity Express — Ethiopia's trusted carriers, united on one platform." />
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-12">
-            {OPERATORS.map((op) => (
+            {[...OPERATORS].sort((a, b) => a.name.localeCompare(b.name)).map((op) => (
               <div key={op.name} className="bg-card border border-border rounded-sm p-7 hover:border-primary/40 transition-all group">
                 <div className="flex items-start justify-between mb-5">
                   <div className="w-11 h-11 rounded-sm bg-secondary border border-border flex items-center justify-center group-hover:bg-primary/10 transition-colors">

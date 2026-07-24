@@ -5,12 +5,17 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import TelebirrPay from "@/components/TelebirrPay";
 import EInvoice from "@/components/EInvoice";
-import { ArrowRight, ArrowLeft, Check, ShieldAlert, Loader2, Bus, MapPin, UserCheck, Banknote, Bell, Clock, PartyPopper, Armchair, Users, Globe } from "lucide-react";
+import {
+  ArrowRight, ArrowLeft, Check, ShieldAlert, Loader2, Bus, MapPin,
+  UserCheck, Banknote, Bell, Clock, PartyPopper, Armchair, Users,
+  Globe, Ticket, MessageSquare, AlertTriangle,
+} from "lucide-react";
 import { getRefundPolicyForBooking } from "@/lib/refundPolicy";
 import { SEATING_RULE } from "@/lib/operatorProfiles";
 import SeatMap from "@/components/SeatMap";
 import TripComparison from "@/components/TripComparison";
 
+// Steps: 1=Details+Seats | 2=Delivery Method | 3=Payment | 4=Ticket
 export default function Booking() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -18,39 +23,49 @@ export default function Booking() {
 
   const [route, setRoute] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [step, setStep] = useState(1); // 1 details | 2 payment | 3 invoice
+  const [step, setStep] = useState(1);
+
+  // Passenger info
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [selectedSeats, setSelectedSeats] = useState([]); // number[]
-  const [bookings, setBookings] = useState([]); // array of created booking records
+  const [selectedSeats, setSelectedSeats] = useState([]);
+
+  // Seat hold
+  const [heldBookingIds, setHeldBookingIds] = useState([]);
+  const [holdExpiresAt, setHoldExpiresAt] = useState(null);
+  const [holdError, setHoldError] = useState(null);
+  const [holdLoading, setHoldLoading] = useState(false);
+
+  // Delivery method
+  const [deliveryMethod, setDeliveryMethod] = useState(null); // "boarding-pass" | "sms"
+
+  // Post-payment
+  const [bookings, setBookings] = useState([]);
   const [creating, setCreating] = useState(false);
+  const [showConfirmAlert, setShowConfirmAlert] = useState(false);
+
+  // Auth / mode
   const [agentMode, setAgentMode] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
-  const [showConfirmAlert, setShowConfirmAlert] = useState(false);
+
+  // Geo / FX
   const [isAbroad, setIsAbroad] = useState(false);
   const [geoChecked, setGeoChecked] = useState(false);
-  const [usdToEtb, setUsdToEtb] = useState(130); // fallback rate
+  const [usdToEtb, setUsdToEtb] = useState(130);
 
   useEffect(() => {
     base44.auth.me().then(setCurrentUser).catch(() => {});
   }, []);
 
-  // Detect location + fetch live exchange rate in parallel
   useEffect(() => {
     fetch("https://ipapi.co/json/")
       .then((r) => r.json())
-      .then((data) => {
-        setIsAbroad(data.country_code !== "ET");
-        setGeoChecked(true);
-      })
+      .then((d) => { setIsAbroad(d.country_code !== "ET"); setGeoChecked(true); })
       .catch(() => setGeoChecked(true));
-
     fetch("https://api.frankfurter.app/latest?from=USD&to=ETB")
       .then((r) => r.json())
-      .then((data) => {
-        if (data?.rates?.ETB) setUsdToEtb(data.rates.ETB);
-      })
-      .catch(() => {}); // keep fallback
+      .then((d) => { if (d?.rates?.ETB) setUsdToEtb(d.rates.ETB); })
+      .catch(() => {});
   }, []);
 
   const isOperator = currentUser?.role === "operator";
@@ -62,32 +77,28 @@ export default function Booking() {
     base44.entities.Route.get(routeId)
       .then((r) => {
         if (isOperator && currentUser?.operator_name && r.operator !== currentUser.operator_name) {
-          navigate("/routes");
-          return;
+          navigate("/routes"); return;
         }
-        setRoute(r);
-        setLoading(false);
+        setRoute(r); setLoading(false);
       })
       .catch(() => setLoading(false));
   }, [routeId, isOperator, currentUser]);
 
   const fare = route?.fare || 0;
-  const serviceFee = isAbroad ? 0 : 20; // 20 ETB local fee, waived for international
-  const internationalFee = isAbroad ? Math.round(usdToEtb) : 0; // $1 USD equivalent in ETB for international
+  const serviceFee = isAbroad ? 0 : 20;
+  const internationalFee = isAbroad ? Math.round(usdToEtb) : 0;
   const totalPerSeat = fare + serviceFee + internationalFee;
   const seatCount = selectedSeats.length || 1;
   const grandTotal = totalPerSeat * Math.max(selectedSeats.length, 1);
   const maxSeats = Math.min(6, route?.available_seats || 1);
 
-  const handlePaid = async (paymentMethod = "telebirr") => {
-    setCreating(true);
-    const policy = getRefundPolicyForBooking(route.departure_date, route.departure_time);
-    const refundPolicy = policy.pct === 100 ? "full" : policy.pct === 50 ? "half" : "none";
-    // Use the seats the passenger explicitly selected, sorted ascending
+  // ── Step 1 → 2: Hold the selected seats ──────────────────────────────────
+  const handleHoldSeats = async () => {
+    setHoldError(null);
+    setHoldLoading(true);
     const seats = [...selectedSeats].sort((a, b) => a - b).map(String);
-
-    const baseInvoice = `AK-${Date.now().toString().slice(-8)}`;
-    const bookingRecords = seats.map((seat, i) => ({
+    const expiresAt = new Date(Date.now() + 12 * 60 * 1000).toISOString();
+    const holdRecords = seats.map((seat) => ({
       route_id: route.id,
       passenger_name: name,
       phone,
@@ -99,26 +110,138 @@ export default function Booking() {
       departure_time: route.departure_time,
       arrival_time: route.arrival_time,
       fare: totalPerSeat,
-      status: "confirmed",
-      payment_method: paymentMethod,
-      invoice_number: seatCount === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`,
-      qr_data: seatCount === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`,
-      refund_policy: refundPolicy,
+      status: "held",
+      hold_expires_at: expiresAt,
     }));
+    try {
+      const created = await base44.entities.Booking.bulkCreate(holdRecords);
+      const ids = (Array.isArray(created) ? created : holdRecords).map((b) => b.id).filter(Boolean);
+      setHeldBookingIds(ids);
+      setHoldExpiresAt(expiresAt);
+      setStep(2);
+    } catch {
+      setHoldError("Could not reserve seats. Please try again.");
+    } finally {
+      setHoldLoading(false);
+    }
+  };
+
+  // ── Step 2 → 1: Release holds and go back ────────────────────────────────
+  const handleReleaseHolds = async () => {
+    for (const id of heldBookingIds) {
+      try { await base44.entities.Booking.delete(id); } catch {}
+    }
+    setHeldBookingIds([]);
+    setHoldExpiresAt(null);
+    setSelectedSeats([]);
+    setDeliveryMethod(null);
+    setStep(1);
+  };
+
+  // ── Payment confirmed: update held bookings → confirmed ───────────────────
+  const handlePaid = async (paymentMethod = "telebirr") => {
+    setCreating(true);
+    setHoldError(null);
+
+    // Check hold expiry
+    if (holdExpiresAt && new Date(holdExpiresAt) < new Date()) {
+      setHoldError("Your seat hold has expired. Please re-select your seats.");
+      setHeldBookingIds([]);
+      setSelectedSeats([]);
+      setStep(1);
+      setCreating(false);
+      return;
+    }
+
+    const policy = getRefundPolicyForBooking(route.departure_date, route.departure_time);
+    const refundPolicy = policy.pct === 100 ? "full" : policy.pct === 50 ? "half" : "none";
+    const seats = [...selectedSeats].sort((a, b) => a - b).map(String);
+    const baseInvoice = `AK-${Date.now().toString().slice(-8)}`;
 
     try {
-      const created = await base44.entities.Booking.bulkCreate(bookingRecords);
+      let confirmed = [];
+
+      if (heldBookingIds.length > 0) {
+        // Update held bookings → confirmed
+        for (let i = 0; i < heldBookingIds.length; i++) {
+          const id = heldBookingIds[i];
+          const invoiceNum = seats.length === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`;
+          try {
+            const updated = await base44.entities.Booking.update(id, {
+              status: "confirmed",
+              payment_method: paymentMethod,
+              invoice_number: invoiceNum,
+              qr_data: invoiceNum,
+              refund_policy: refundPolicy,
+              delivery_method: deliveryMethod,
+              hold_expires_at: null,
+            });
+            confirmed.push(updated ?? { id, seat_number: seats[i], invoice_number: invoiceNum });
+          } catch {
+            // Booking no longer exists — seat was taken
+            setHoldError("One or more seats are no longer available. Please re-select seats.");
+            for (const rid of heldBookingIds) {
+              try { await base44.entities.Booking.delete(rid); } catch {}
+            }
+            setHeldBookingIds([]);
+            setSelectedSeats([]);
+            setStep(1);
+            setCreating(false);
+            return;
+          }
+        }
+      } else {
+        // Fallback: create confirmed bookings directly
+        const records = seats.map((seat, i) => ({
+          route_id: route.id,
+          passenger_name: name,
+          phone,
+          seat_number: seat,
+          from_city: route.from_city,
+          to_city: route.to_city,
+          operator: route.operator,
+          departure_date: route.departure_date,
+          departure_time: route.departure_time,
+          arrival_time: route.arrival_time,
+          fare: totalPerSeat,
+          status: "confirmed",
+          payment_method: paymentMethod,
+          invoice_number: seats.length === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`,
+          qr_data: seats.length === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`,
+          refund_policy: refundPolicy,
+          delivery_method: deliveryMethod,
+        }));
+        const created = await base44.entities.Booking.bulkCreate(records);
+        confirmed = Array.isArray(created) ? created : records;
+      }
+
       await base44.entities.Route.update(route.id, {
-        available_seats: Math.max(0, route.available_seats - seatCount),
+        available_seats: Math.max(0, route.available_seats - seats.length),
       });
-      setBookings(Array.isArray(created) ? created : bookingRecords);
-    } catch (e) {
-      setBookings(bookingRecords);
-    } finally {
-      setCreating(false);
-      setStep(3);
+
+      setBookings(confirmed);
+      setStep(4);
       setShowConfirmAlert(true);
       setTimeout(() => setShowConfirmAlert(false), 6000);
+    } catch {
+      // Last-resort fallback — show ticket with local data
+      setBookings(
+        seats.map((seat, i) => ({
+          route_id: route.id, passenger_name: name, phone, seat_number: seat,
+          from_city: route.from_city, to_city: route.to_city, operator: route.operator,
+          departure_date: route.departure_date, departure_time: route.departure_time,
+          arrival_time: route.arrival_time, fare: totalPerSeat, status: "confirmed",
+          payment_method: paymentMethod,
+          invoice_number: seats.length === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`,
+          qr_data: seats.length === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`,
+          refund_policy: refundPolicy, delivery_method: deliveryMethod,
+        }))
+      );
+      setStep(4);
+      setShowConfirmAlert(true);
+      setTimeout(() => setShowConfirmAlert(false), 6000);
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -129,7 +252,6 @@ export default function Booking() {
       </div>
     );
   }
-
   if (!route) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -173,16 +295,24 @@ export default function Booking() {
           </div>
 
           {/* Progress */}
-          <Stepper step={step} />
+          <Stepper step={step} agentMode={effectiveAgentMode} />
+
+          {/* Hold error banner */}
+          {holdError && (
+            <div className="mt-6 flex items-start gap-3 border border-destructive/50 bg-destructive/10 rounded-sm px-5 py-4">
+              <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-destructive">{holdError}</p>
+            </div>
+          )}
 
           {/* Route summary bar */}
-          <div className="glass rounded-sm p-5 mt-8 mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div className="glass rounded-sm p-5 mt-6 mb-8 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="w-10 h-10 rounded-sm bg-secondary border border-border flex items-center justify-center">
                 <Bus className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <div className="font-display font-bold text-sm">{route.operator} · {route.bus_type}</div>
+                <div className="font-display font-bold text-sm">{route.operator_name || route.operator} · {route.bus_type}</div>
                 <div className="text-xs text-muted-foreground flex items-center gap-2">
                   <MapPin className="w-3 h-3" />{route.from_city} → {route.to_city}
                 </div>
@@ -192,16 +322,19 @@ export default function Booking() {
               <div><span className="text-muted-foreground text-xs">DEPART</span><div className="font-mono font-bold">{route.departure_time}</div></div>
               <div><span className="text-muted-foreground text-xs">ARRIVE</span><div className="font-mono font-bold">{route.arrival_time}</div></div>
               <div><span className="text-muted-foreground text-xs">DATE</span><div className="font-mono font-bold">{route.departure_date}</div></div>
-              <div><span className="text-muted-foreground text-xs">SEATS LEFT</span><div className={`font-mono font-bold ${route.available_seats <= 7 ? "text-destructive" : "text-accent"}`}>{route.available_seats}</div></div>
+              <div>
+                <span className="text-muted-foreground text-xs">SEATS LEFT</span>
+                <div className={`font-mono font-bold ${route.available_seats <= 7 ? "text-destructive" : "text-accent"}`}>
+                  {route.available_seats}
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Trip Comparison */}
-          {step === 1 && <TripComparison currentRoute={route} />}
-
-          {/* Step 1 — Passenger Details */}
+          {/* ── STEP 1: Details + Seat Selection ── */}
           {step === 1 && (
             <div className="space-y-6">
+              {step === 1 && <TripComparison currentRoute={route} />}
               <div className="grid lg:grid-cols-[1fr_280px] gap-8">
                 <div className="bg-card border border-border rounded-sm p-8">
                   <h3 className="font-display font-bold text-xl mb-2">Passenger Details</h3>
@@ -238,7 +371,7 @@ export default function Booking() {
                       <div className="flex items-start gap-2 border border-border bg-secondary/40 rounded-sm px-4 py-3">
                         <Users className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
                         <span className="text-xs text-muted-foreground">
-                          Travelling as a group? Select up to {maxSeats} adjacent seats on the map below — your group will sit together.
+                          Select a seat on the map below before continuing. Travelling as a group? Pick up to {maxSeats} adjacent seats.
                         </span>
                       </div>
                     )}
@@ -248,34 +381,133 @@ export default function Booking() {
                         <div>
                           <div className="font-mono text-[9px] tracking-[0.2em] text-accent font-bold mb-0.5">INTERNATIONAL BOOKING DETECTED</div>
                           <span className="text-xs text-muted-foreground">
-                            A <span className="text-accent font-semibold">$1 international remittance fee</span> applies per seat for bookings made outside Ethiopia.
+                            A <span className="text-accent font-semibold">$1 international remittance fee</span> applies per seat.
                           </span>
                         </div>
                       </div>
                     )}
                   </div>
                   <button
-                    disabled={name.trim().length < 2 || phone.length < 9 || selectedSeats.length === 0}
-                    onClick={() => setStep(2)}
+                    disabled={name.trim().length < 2 || phone.length < 9 || selectedSeats.length === 0 || holdLoading}
+                    onClick={handleHoldSeats}
                     className="mt-8 w-full bg-primary text-primary-foreground font-semibold py-3.5 rounded-sm hover:brightness-110 transition-all disabled:opacity-40 flex items-center justify-center gap-2"
                   >
-                    {effectiveAgentMode ? <>Confirm Details <ArrowRight className="w-4 h-4" /></> : <>Proceed to Payment <ArrowRight className="w-4 h-4" /></>}
+                    {holdLoading
+                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Reserving seats…</>
+                      : <>Select Delivery Method <ArrowRight className="w-4 h-4" /></>}
                   </button>
+                  {selectedSeats.length === 0 && name.trim().length >= 2 && phone.length >= 9 && (
+                    <p className="text-center text-xs text-destructive mt-3">Please select at least one seat to continue.</p>
+                  )}
                 </div>
-                <SummaryCard route={route} totalPerSeat={totalPerSeat} serviceFee={serviceFee} internationalFee={internationalFee} isAbroad={isAbroad} seatCount={selectedSeats.length} grandTotal={selectedSeats.length > 0 ? totalPerSeat * selectedSeats.length : totalPerSeat} />
+                <SummaryCard
+                  route={route} totalPerSeat={totalPerSeat} serviceFee={serviceFee}
+                  internationalFee={internationalFee} isAbroad={isAbroad}
+                  seatCount={selectedSeats.length} grandTotal={selectedSeats.length > 0 ? totalPerSeat * selectedSeats.length : totalPerSeat}
+                />
               </div>
-              <SeatMap
-                route={route}
-                selectedSeats={selectedSeats}
-                onSelect={setSelectedSeats}
-                maxSeats={maxSeats}
-              />
+              <SeatMap route={route} selectedSeats={selectedSeats} onSelect={setSelectedSeats} maxSeats={maxSeats} />
             </div>
           )}
 
-          {/* Step 2 — Payment */}
+          {/* ── STEP 2: Delivery Method ── */}
           {step === 2 && (
+            <div className="max-w-lg mx-auto">
+              <div className="text-center mb-8">
+                <div className="font-mono text-[11px] tracking-[0.3em] text-primary mb-3">STEP 2 OF 4</div>
+                <h2 className="heading-mega text-3xl sm:text-4xl">How to receive your ticket?</h2>
+                <p className="text-muted-foreground text-sm mt-3">
+                  Choose how you'd like your ticket delivered after payment is confirmed.
+                </p>
+              </div>
+
+              {/* Seat hold countdown */}
+              {holdExpiresAt && <HoldCountdown expiresAt={holdExpiresAt} seats={selectedSeats} />}
+
+              <div className="space-y-4 mt-6">
+                {/* Boarding Pass */}
+                <button
+                  onClick={() => setDeliveryMethod("boarding-pass")}
+                  className={`w-full text-left border rounded-sm p-6 transition-all ${
+                    deliveryMethod === "boarding-pass"
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/50"
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={`w-10 h-10 rounded-sm flex items-center justify-center flex-shrink-0 ${
+                      deliveryMethod === "boarding-pass" ? "bg-primary/20" : "bg-secondary"
+                    }`}>
+                      <Ticket className={`w-5 h-5 ${deliveryMethod === "boarding-pass" ? "text-primary" : "text-muted-foreground"}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <div className="font-display font-bold">Digital Boarding Pass</div>
+                        {deliveryMethod === "boarding-pass" && (
+                          <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                            <Check className="w-3 h-3 text-primary-foreground" />
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                        A formatted digital ticket with your name, route, seat number, and QR code — viewable in-app. Show it at boarding with valid ID.
+                      </p>
+                    </div>
+                  </div>
+                </button>
+
+                {/* SMS */}
+                <button
+                  onClick={() => setDeliveryMethod("sms")}
+                  className={`w-full text-left border rounded-sm p-6 transition-all ${
+                    deliveryMethod === "sms"
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/50"
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={`w-10 h-10 rounded-sm flex items-center justify-center flex-shrink-0 ${
+                      deliveryMethod === "sms" ? "bg-primary/20" : "bg-secondary"
+                    }`}>
+                      <MessageSquare className={`w-5 h-5 ${deliveryMethod === "sms" ? "text-primary" : "text-muted-foreground"}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <div className="font-display font-bold">SMS Summary</div>
+                        {deliveryMethod === "sms" && (
+                          <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                            <Check className="w-3 h-3 text-primary-foreground" />
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                        A concise text message with your operator, date, time, seat number, and booking reference sent to{" "}
+                        <span className="font-mono text-foreground">+251 {phone}</span>.
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              </div>
+
+              <button
+                disabled={!deliveryMethod}
+                onClick={() => setStep(3)}
+                className="mt-8 w-full bg-primary text-primary-foreground font-semibold py-3.5 rounded-sm hover:brightness-110 transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+              >
+                Proceed to Payment <ArrowRight className="w-4 h-4" />
+              </button>
+              <div className="text-center mt-4">
+                <button onClick={handleReleaseHolds} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
+                  <ArrowLeft className="w-4 h-4" /> Back — change seats
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── STEP 3: Payment ── */}
+          {step === 3 && (
             <div>
+              {holdExpiresAt && <HoldCountdown expiresAt={holdExpiresAt} seats={selectedSeats} className="mb-6" />}
               {effectiveAgentMode ? (
                 <div className="max-w-md mx-auto">
                   <div className="text-center mb-8">
@@ -284,13 +516,16 @@ export default function Booking() {
                     </div>
                     <div className="font-mono text-[11px] tracking-[0.3em] text-primary mb-3">AGENT MODE · CASH PAYMENT</div>
                     <h2 className="heading-mega text-3xl sm:text-4xl">Confirm Cash</h2>
-                    <p className="text-muted-foreground text-sm mt-2">Collect <span className="text-primary font-bold">{grandTotal.toLocaleString()} ETB</span> from the customer, then confirm to issue the ticket{seatCount > 1 ? "s" : ""}.</p>
+                    <p className="text-muted-foreground text-sm mt-2">
+                      Collect <span className="text-primary font-bold">{grandTotal.toLocaleString()} ETB</span> from the customer, then confirm to issue the ticket{seatCount > 1 ? "s" : ""}.
+                    </p>
                   </div>
                   <div className="bg-card border border-border rounded-sm p-6 space-y-3 text-sm mb-6">
                     <div className="flex justify-between"><span className="text-muted-foreground">Passenger</span><span className="font-medium">{name}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Phone</span><span className="font-mono">+251 {phone}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Seats</span><span className="font-mono font-bold text-primary">{[...selectedSeats].sort((a,b)=>a-b).join(", ")}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Seats</span><span className="font-mono font-bold text-primary">{[...selectedSeats].sort((a, b) => a - b).join(", ")}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Route</span><span>{route.from_city} → {route.to_city}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Delivery</span><span className="capitalize">{deliveryMethod === "boarding-pass" ? "Digital boarding pass" : "SMS"}</span></div>
                     <div className="h-px bg-border" />
                     <div className="flex justify-between font-bold"><span>Cash Collected</span><span className="text-primary">{grandTotal.toLocaleString()} ETB</span></div>
                   </div>
@@ -302,7 +537,7 @@ export default function Booking() {
                     {creating ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Check className="w-5 h-5" /> Cash Received — Issue {seatCount > 1 ? `${seatCount} Tickets` : "Ticket"}</>}
                   </button>
                   <div className="text-center mt-4">
-                    <button onClick={() => setStep(1)} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
+                    <button onClick={() => setStep(2)} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
                       <ArrowLeft className="w-4 h-4" /> Back
                     </button>
                   </div>
@@ -313,7 +548,9 @@ export default function Booking() {
                     <div className="font-mono text-[11px] tracking-[0.3em] text-primary mb-3">THE TELEBIRR RITUAL</div>
                     <h2 className="heading-mega text-3xl sm:text-4xl">Authorize Payment</h2>
                     {seatCount > 1 && (
-                      <p className="text-muted-foreground text-sm mt-2">{seatCount} seats · <span className="text-primary font-bold">{grandTotal.toLocaleString()} ETB</span> total</p>
+                      <p className="text-muted-foreground text-sm mt-2">
+                        {seatCount} seats · <span className="text-primary font-bold">{grandTotal.toLocaleString()} ETB</span> total
+                      </p>
                     )}
                   </div>
                   <TelebirrPay phone={phone} amount={grandTotal} onPaid={() => handlePaid("telebirr")} />
@@ -324,7 +561,7 @@ export default function Booking() {
                     </div>
                   )}
                   <div className="text-center mt-6">
-                    <button onClick={() => setStep(1)} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
+                    <button onClick={() => setStep(2)} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
                       <ArrowLeft className="w-4 h-4" /> Back
                     </button>
                   </div>
@@ -333,8 +570,8 @@ export default function Booking() {
             </div>
           )}
 
-          {/* Step 3 — Tickets */}
-          {step === 3 && bookings.length > 0 && (
+          {/* ── STEP 4: Tickets ── */}
+          {step === 4 && bookings.length > 0 && (
             <div>
               {showConfirmAlert && (
                 <div className="mb-6 flex items-center gap-3 border border-accent/50 bg-accent/10 rounded-sm px-5 py-4 animate-slide-up">
@@ -343,10 +580,25 @@ export default function Booking() {
                     <div className="font-mono text-[10px] tracking-[0.2em] text-accent font-bold mb-0.5">BOOKING CONFIRMED</div>
                     <p className="text-sm text-foreground">
                       {bookings.length > 1 ? `${bookings.length} tickets` : "Your ticket"} for{" "}
-                      <span className="font-semibold">{bookings[0].from_city} → {bookings[0].to_city}</span> {bookings.length > 1 ? "have" : "has"} been issued.
+                      <span className="font-semibold">{bookings[0].from_city} → {bookings[0].to_city}</span>{" "}
+                      {bookings.length > 1 ? "have" : "has"} been issued.
                     </p>
                   </div>
                   <button onClick={() => setShowConfirmAlert(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">×</button>
+                </div>
+              )}
+
+              {/* SMS delivery notice */}
+              {bookings[0]?.delivery_method === "sms" && (
+                <div className="mb-6 flex items-start gap-3 border border-primary/30 bg-primary/5 rounded-sm px-5 py-4">
+                  <MessageSquare className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-mono text-[10px] tracking-[0.2em] text-primary font-bold mb-0.5">SMS TICKET SUMMARY</div>
+                    <p className="text-sm text-muted-foreground">
+                      A text message with your booking details has been sent to{" "}
+                      <span className="font-mono text-foreground">+251 {bookings[0].phone}</span>.
+                    </p>
+                  </div>
                 </div>
               )}
 
@@ -388,8 +640,10 @@ export default function Booking() {
   );
 }
 
+// ── Sub-components ────────────────────────────────────────────────────────────
+
 function Stepper({ step }) {
-  const steps = ["Details", "Payment", "Ticket"];
+  const steps = ["Details", "Delivery", "Payment", "Ticket"];
   return (
     <div className="flex items-center gap-2">
       {steps.map((s, i) => {
@@ -405,7 +659,7 @@ function Stepper({ step }) {
               </div>
               <span className={`text-xs font-medium hidden sm:inline ${active ? "text-foreground" : "text-muted-foreground"}`}>{s}</span>
             </div>
-            {i < steps.length - 1 && <div className={`w-8 h-px ${step > n ? "bg-primary" : "bg-border"}`} />}
+            {i < steps.length - 1 && <div className={`w-6 h-px ${step > n ? "bg-primary" : "bg-border"}`} />}
           </React.Fragment>
         );
       })}
@@ -413,9 +667,51 @@ function Stepper({ step }) {
   );
 }
 
+function HoldCountdown({ expiresAt, seats, className = "" }) {
+  const [remaining, setRemaining] = useState("");
+  const [urgent, setUrgent] = useState(false);
+
+  useEffect(() => {
+    const tick = () => {
+      const ms = new Date(expiresAt) - Date.now();
+      if (ms <= 0) { setRemaining("expired"); return; }
+      const m = Math.floor(ms / 60000);
+      const s = Math.floor((ms % 60000) / 1000);
+      setRemaining(`${m}:${s.toString().padStart(2, "0")}`);
+      setUrgent(ms < 3 * 60 * 1000);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [expiresAt]);
+
+  if (!remaining || remaining === "expired") return null;
+
+  return (
+    <div className={`flex items-center gap-3 border rounded-sm px-4 py-3 ${
+      urgent ? "border-destructive/50 bg-destructive/10" : "border-primary/30 bg-primary/5"
+    } ${className}`}>
+      <Clock className={`w-4 h-4 flex-shrink-0 ${urgent ? "text-destructive" : "text-primary"}`} />
+      <div>
+        <span className={`font-mono text-[10px] font-bold tracking-wider ${urgent ? "text-destructive" : "text-primary"}`}>
+          SEAT{seats.length > 1 ? "S" : ""} HELD · EXPIRES IN{" "}
+        </span>
+        <span className={`font-mono font-bold ${urgent ? "text-destructive" : "text-primary"}`}>{remaining}</span>
+        <span className={`text-xs ml-2 ${urgent ? "text-destructive/80" : "text-muted-foreground"}`}>
+          — Seat{seats.length > 1 ? "s" : ""} {[...seats].sort((a, b) => a - b).join(", ")} reserved for you
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function SummaryCard({ route, totalPerSeat, serviceFee, internationalFee, isAbroad, seatCount, grandTotal }) {
   const policy = route ? getRefundPolicyForBooking(route.departure_date, route.departure_time) : null;
-  const colorMap = { accent: "text-accent border-accent/40", primary: "text-primary border-primary/40", destructive: "text-destructive border-destructive/40" };
+  const colorMap = {
+    accent: "text-accent border-accent/40",
+    primary: "text-primary border-primary/40",
+    destructive: "text-destructive border-destructive/40",
+  };
   const seats = Math.max(seatCount, 1);
   return (
     <div className="bg-card border border-border rounded-sm p-6 h-fit sticky top-24">
@@ -432,12 +728,14 @@ function SummaryCard({ route, totalPerSeat, serviceFee, internationalFee, isAbro
             <span className="font-medium text-accent">+{(internationalFee * seats).toLocaleString()} ETB <span className="text-[10px] text-muted-foreground">($1/seat)</span></span>
           </div>
         )}
-        {seatCount > 1 && <Row label={`Seats`} value={`× ${seatCount}`} muted />}
+        {seatCount > 1 && <Row label="Seats" value={`× ${seatCount}`} muted />}
       </div>
       <div className="h-px bg-border my-5" />
       <div className="flex items-end justify-between">
         <span className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground">TOTAL</span>
-        <div className="font-display font-extrabold text-2xl text-primary">{grandTotal.toLocaleString()}<span className="text-xs text-muted-foreground ml-1">ETB</span></div>
+        <div className="font-display font-extrabold text-2xl text-primary">
+          {grandTotal.toLocaleString()}<span className="text-xs text-muted-foreground ml-1">ETB</span>
+        </div>
       </div>
       {seatCount > 1 && (
         <p className="text-[10px] text-muted-foreground mt-2 text-right">{totalPerSeat.toLocaleString()} ETB × {seatCount} seats</p>
@@ -500,14 +798,12 @@ function DepartureReminder({ departureDate, departureTime }) {
       if (diff <= 0) { setTimeLeft("Departed"); setUrgency("imminent"); return; }
       const h = Math.floor(diff / 3600000);
       const m = Math.floor((diff % 3600000) / 60000);
-      if (h < 1) { setUrgency("imminent"); }
-      else if (h < 3) { setUrgency("soon"); }
-      else { setUrgency("normal"); }
+      setUrgency(h < 1 ? "imminent" : h < 3 ? "soon" : "normal");
       setTimeLeft(h > 0 ? `${h}h ${m}m` : `${m}m`);
     };
     calc();
-    const interval = setInterval(calc, 60000);
-    return () => clearInterval(interval);
+    const id = setInterval(calc, 60000);
+    return () => clearInterval(id);
   }, [departureDate, departureTime]);
 
   const styles = {
@@ -525,13 +821,16 @@ function DepartureReminder({ departureDate, departureTime }) {
       <div className="flex-1">
         <div className={`font-mono text-[10px] font-bold tracking-wider mb-1 ${s.text}`}>{s.label}</div>
         <p className="text-sm text-muted-foreground">
-          Your bus departs on <span className="text-foreground font-semibold">{departureDate}</span> at <span className="text-foreground font-semibold">{departureTime}</span>.
+          Your bus departs on <span className="text-foreground font-semibold">{departureDate}</span> at{" "}
+          <span className="text-foreground font-semibold">{departureTime}</span>.
           {timeLeft && timeLeft !== "Departed" && (
             <> Time remaining: <span className={`font-mono font-bold ${s.text}`}>{timeLeft}</span>.</>
           )}
           {timeLeft === "Departed" && <span className="text-destructive font-semibold"> This bus has already departed.</span>}
         </p>
-        <p className="text-xs text-muted-foreground mt-1">Arrive at the terminal at least <span className="font-semibold text-foreground">30 minutes</span> before departure. Tickets are non-refundable for missed buses.</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Arrive at the terminal at least <span className="font-semibold text-foreground">30 minutes</span> before departure. Tickets are non-refundable for missed buses.
+        </p>
       </div>
     </div>
   );

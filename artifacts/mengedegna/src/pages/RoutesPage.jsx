@@ -18,7 +18,7 @@ export default function RoutesPage() {
   const [loading, setLoading] = useState(true);
   const [from, setFrom] = useState(params.get("from") || "");
   const [to, setTo] = useState(params.get("to") || "");
-  const [sort, setSort] = useState("earliest");
+  const [sort, setSort] = useState("operator");
   const [klass, setKlass] = useState("all");
   const { t } = useLang();
 
@@ -39,9 +39,10 @@ export default function RoutesPage() {
     let list = routes;
     if (klass !== "all") list = list.filter((r) => r.operator_class === klass);
     const sorted = [...list].sort((a, b) => {
-      if (sort === "earliest") return a.departure_time.localeCompare(b.departure_time);
+      if (sort === "operator") return (a.operator_name || a.operator || "").localeCompare(b.operator_name || b.operator || "");
+      if (sort === "earliest") return (a.departure_time || "").localeCompare(b.departure_time || "");
       if (sort === "cheapest") return a.fare - b.fare;
-      if (sort === "fastest") return a.duration.localeCompare(b.duration);
+      if (sort === "fastest") return (a.duration || "").localeCompare(b.duration || "");
       return 0;
     });
     return sorted;
@@ -72,6 +73,7 @@ export default function RoutesPage() {
                 <option value="electric" className="bg-card">{t("electric")}</option>
               </select>
               <select value={sort} onChange={(e) => setSort(e.target.value)} className="bg-card border border-border rounded-sm px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                <option value="operator" className="bg-card">Operator A→Z</option>
                 <option value="earliest" className="bg-card">{t("earliest")}</option>
                 <option value="cheapest" className="bg-card">{t("cheapest")}</option>
                 <option value="fastest" className="bg-card">{t("fastest")}</option>

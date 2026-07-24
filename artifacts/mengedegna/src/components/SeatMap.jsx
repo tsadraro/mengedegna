@@ -2,14 +2,26 @@ import React, { useEffect, useState } from "react";
 import { Disc3, Loader2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
-// Fetch actually confirmed seats from DB for this route
+// Fetch taken seats: confirmed bookings + non-expired holds
 async function fetchTakenSeats(routeId) {
   const existing = await base44.entities.Booking.filter(
-    { route_id: routeId, status: "confirmed" },
+    { route_id: routeId },
     "created_date",
     500
   );
-  return new Set(existing.map((b) => parseInt(b.seat_number, 10)).filter(Boolean));
+  const now = Date.now();
+  return new Set(
+    existing
+      .filter((b) => {
+        if (b.status === "confirmed") return true;
+        if (b.status === "held") {
+          return b.hold_expires_at && new Date(b.hold_expires_at).getTime() > now;
+        }
+        return false;
+      })
+      .map((b) => parseInt(b.seat_number, 10))
+      .filter(Boolean)
+  );
 }
 
 // Check if a set of seat numbers are all adjacent (consecutive integers)

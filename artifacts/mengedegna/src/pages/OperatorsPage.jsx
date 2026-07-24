@@ -13,7 +13,7 @@ const CLASS_BADGE = {
 };
 
 export default function OperatorsPage() {
-  const operators = Object.values(OPERATOR_PROFILES);
+  const operators = Object.values(OPERATOR_PROFILES).sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="min-h-screen bg-background">
