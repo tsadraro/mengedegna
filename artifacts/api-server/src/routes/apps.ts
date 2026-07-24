@@ -469,12 +469,15 @@ router.put(
 // POST   /api/apps/:appId/entities/:entity/bulk    bulk create
 // ---------------------------------------------------------------------------
 
+// Entities that guests may read without a JWT
+const PUBLIC_READ_ENTITIES = new Set(["Route", "Operator", "Schedule"]);
+
 // List / filter
 router.get(
   "/apps/:appId/entities/:entity",
   async (req: Request, res: Response) => {
-    if (!requireAppAuth(req, res)) return;
     const { appId, entity } = req.params;
+    if (!PUBLIC_READ_ENTITIES.has(entity) && !requireAppAuth(req, res)) return;
     const { q, sort, limit, skip } = req.query as Record<string, string | undefined>;
 
     let filterClauses: SQL[] = [];
@@ -517,8 +520,8 @@ router.get(
 router.get(
   "/apps/:appId/entities/:entity/:id",
   async (req: Request, res: Response) => {
-    if (!requireAppAuth(req, res)) return;
     const { appId, entity, id } = req.params;
+    if (!PUBLIC_READ_ENTITIES.has(entity) && !requireAppAuth(req, res)) return;
     const rows = await db
       .select()
       .from(entitiesTable)
