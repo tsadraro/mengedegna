@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "Mengedegna"
+version = "1.0.0"
+id = "artifacts/mengedegna"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22323
+
+[services.development]
+run = "pnpm --filter @workspace/mengedegna run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/mengedegna", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/mengedegna/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22323"
+BASE_PATH = "/"
