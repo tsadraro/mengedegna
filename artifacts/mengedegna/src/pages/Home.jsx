@@ -155,8 +155,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-base opacity-70 max-w-2xl mx-auto" style={{ lineHeight: 1.7 }}>
-            Cancel more than 24 hours before departure for a full refund. Between 18–24 hours, receive 50% back.
-            Within 18 hours of departure, tickets are non-refundable. All tickets are non-transferable.
+            Cancellations made 24 hours or more before departure receive a full refund. Cancellations made between 12 and 24 hours before departure receive a 50% refund. Cancellations made less than 12 hours before departure are non-refundable. All tickets are non-transferable.
           </p>
         </div>
       </section>

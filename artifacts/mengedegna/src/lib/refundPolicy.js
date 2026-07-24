@@ -2,9 +2,9 @@
  * Refund policy logic for Abyssinian Kinetics.
  *
  * Rules:
- *  - Cancelled MORE than 24h before departure → FULL REFUND
- *  - Cancelled between 18h–24h before departure → 50% REFUND
- *  - Cancelled WITHIN 18h of departure → NO REFUND
+ *  - Cancelled 24h or more before departure → FULL REFUND
+ *  - Cancelled between 12h–24h before departure → 50% REFUND
+ *  - Cancelled less than 12h before departure → NO REFUND
  */
 
 /**
@@ -23,26 +23,26 @@ export function hoursUntilDeparture(departureDate, departureTime) {
  * @returns {{ label: string, pct: number, color: string, description: string }}
  */
 export function getRefundPolicy(hoursRemaining) {
-  if (hoursRemaining > 24) {
+  if (hoursRemaining >= 24) {
     return {
       label: "FULLY REFUNDABLE",
       pct: 100,
       color: "accent", // cyan
-      description: "Cancel more than 24 hours before departure for a full refund.",
+      description: "Cancellations made 24 hours or more before departure receive a full refund.",
     };
-  } else if (hoursRemaining > 18) {
+  } else if (hoursRemaining >= 12) {
     return {
       label: "50% REFUNDABLE",
       pct: 50,
       color: "primary", // gold
-      description: "Cancel between 18–24 hours before departure for a 50% refund.",
+      description: "Cancellations made between 12 and 24 hours before departure receive a 50% refund.",
     };
   } else {
     return {
       label: "NON-REFUNDABLE",
       pct: 0,
       color: "destructive",
-      description: "Cancellations within 18 hours of departure are not eligible for any refund.",
+      description: "Cancellations made less than 12 hours before departure are non-refundable.",
     };
   }
 }
