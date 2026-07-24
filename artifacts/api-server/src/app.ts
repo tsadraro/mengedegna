@@ -25,15 +25,28 @@ app.use(
     },
   }),
 );
-const allowedOrigins: string[] = (process.env["ALLOWED_ORIGINS"] ?? "")
+const extraOrigins: string[] = (process.env["ALLOWED_ORIGINS"] ?? "")
   .split(",")
   .map((o) => o.trim())
   .filter(Boolean);
 
-// In Replit the dev domain is available as REPLIT_DEV_DOMAIN
-const replitDevDomain = process.env["REPLIT_DEV_DOMAIN"];
-if (replitDevDomain) {
-  allowedOrigins.push(`https://${replitDevDomain}`);
+function isOriginAllowed(origin: string): boolean {
+  // Replit preview proxy and local dev
+  if (
+    origin === "http://localhost" ||
+    origin === "http://127.0.0.1" ||
+    origin.startsWith("http://localhost:") ||
+    origin.startsWith("http://127.0.0.1:")
+  ) return true;
+
+  // All Replit dev and deployed domains
+  if (origin.endsWith(".replit.dev") || origin.endsWith(".replit.app"))
+    return true;
+
+  // Any explicitly listed extra origins
+  if (extraOrigins.includes(origin)) return true;
+
+  return false;
 }
 
 app.use(
@@ -41,7 +54,7 @@ app.use(
     origin(origin, callback) {
       // Allow server-to-server requests (no Origin header)
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (isOriginAllowed(origin)) return callback(null, true);
       callback(new Error(`CORS: origin '${origin}' is not allowed`));
     },
     credentials: true,
