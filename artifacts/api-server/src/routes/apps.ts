@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { db } from "@workspace/db";
 import { entitiesTable, usersTable } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, type SQL } from "drizzle-orm";
 import crypto from "crypto";
 import {
   signToken,
@@ -33,10 +33,21 @@ function toApiObject(row: {
   };
 }
 
-/** Build a WHERE SQL fragment from a MongoDB-style query object */
-function buildJsonbFilter(query: Record<string, unknown>): string[] {
-  const clauses: string[] = [];
+/**
+ * Validate that a field name contains only safe identifier characters.
+ * Rejects anything that could break out of a JSONB key context.
+ */
+function isValidFieldName(name: string): boolean {
+  return /^[a-zA-Z0-9_\-\.]+$/.test(name);
+}
+
+/** Build parameterized WHERE SQL fragments from a MongoDB-style query object */
+function buildJsonbFilter(query: Record<string, unknown>): SQL[] {
+  const clauses: SQL[] = [];
   for (const [key, value] of Object.entries(query)) {
+    // Reject field names that aren't safe identifiers
+    if (!isValidFieldName(key)) continue;
+
     if (
       value !== null &&
       typeof value === "object" &&
@@ -44,54 +55,62 @@ function buildJsonbFilter(query: Record<string, unknown>): string[] {
     ) {
       const ops = value as Record<string, unknown>;
       for (const [op, opVal] of Object.entries(ops)) {
-        const col = `data->>'${key}'`;
+        // data->>'fieldName' — key is validated above, safe to embed as raw
+        const col = sql.raw(`data->>'${key}'`);
         switch (op) {
           case "$gt":
-            clauses.push(`(${col})::numeric > ${Number(opVal)}`);
+            clauses.push(sql`(${col})::numeric > ${Number(opVal)}`);
             break;
           case "$gte":
-            clauses.push(`(${col})::numeric >= ${Number(opVal)}`);
+            clauses.push(sql`(${col})::numeric >= ${Number(opVal)}`);
             break;
           case "$lt":
-            clauses.push(`(${col})::numeric < ${Number(opVal)}`);
+            clauses.push(sql`(${col})::numeric < ${Number(opVal)}`);
             break;
           case "$lte":
-            clauses.push(`(${col})::numeric <= ${Number(opVal)}`);
+            clauses.push(sql`(${col})::numeric <= ${Number(opVal)}`);
             break;
           case "$ne":
-            clauses.push(`${col} != '${String(opVal)}'`);
+            // Use parameterized binding — no string interpolation of user data
+            clauses.push(sql`${col} != ${String(opVal)}`);
             break;
           case "$in":
-            if (Array.isArray(opVal)) {
-              const vals = opVal.map((v) => `'${String(v)}'`).join(",");
-              clauses.push(`${col} IN (${vals})`);
+            if (Array.isArray(opVal) && opVal.length > 0) {
+              // Build a parameterized ANY($1::text[]) expression
+              const safeVals = opVal.map((v) => String(v));
+              clauses.push(sql`${col} = ANY(${safeVals})`);
             }
             break;
         }
       }
     } else {
-      // Simple equality – use JSONB containment
-      const escaped = JSON.stringify({ [key]: value }).replace(/'/g, "''");
-      clauses.push(`data @> '${escaped}'::jsonb`);
+      // Simple equality – use JSONB containment with parameterized value
+      const jsonVal = JSON.stringify({ [key]: value });
+      clauses.push(sql`data @> ${jsonVal}::jsonb`);
     }
   }
   return clauses;
 }
 
-/** Parse sort param: "departure_date,-fare" → ORDER BY clause fragments */
-function buildOrderBy(sort?: string): string {
-  if (!sort) return "created_at DESC";
-  const parts = sort.split(",").map((s) => {
+/** Parse sort param: "departure_date,-fare" → parameterized ORDER BY fragment */
+function buildOrderBy(sort?: string): SQL {
+  if (!sort) return sql.raw("created_at DESC");
+  const parts = sort.split(",").flatMap((s) => {
     const desc = s.startsWith("-");
     const field = desc ? s.slice(1) : s;
+    const dir = desc ? "DESC" : "ASC";
     // Handle top-level timestamp columns
     if (field === "created_at" || field === "created_date")
-      return `created_at ${desc ? "DESC" : "ASC"}`;
+      return [sql.raw(`created_at ${dir}`)];
     if (field === "updated_at" || field === "updated_date")
-      return `updated_at ${desc ? "DESC" : "ASC"}`;
-    return `data->>'${field}' ${desc ? "DESC" : "ASC"}`;
+      return [sql.raw(`updated_at ${dir}`)];
+    // Reject field names that aren't safe identifiers — skip invalid parts
+    if (!isValidFieldName(field)) return [];
+    return [sql.raw(`data->>'${field}' ${dir}`)];
   });
-  return parts.join(", ");
+  // Fall back to default if all parts were rejected
+  if (parts.length === 0) return sql.raw("created_at DESC");
+  return sql.join(parts, sql.raw(", "));
 }
 
 /** Extract Bearer token from request */
@@ -458,7 +477,7 @@ router.get(
     const { appId, entity } = req.params;
     const { q, sort, limit, skip } = req.query as Record<string, string | undefined>;
 
-    let filterClauses: string[] = [];
+    let filterClauses: SQL[] = [];
     if (q) {
       try {
         const query = JSON.parse(q) as Record<string, unknown>;
@@ -473,16 +492,14 @@ router.get(
     const limitVal = Math.min(Number(limit ?? 100), 1000);
     const skipVal = Number(skip ?? 0);
 
-    // Build raw SQL for JSONB filtering
-    const baseWhere = `app_id = '${appId.replace(/'/g, "''")}' AND entity_name = '${entity.replace(/'/g, "''")}'`;
+    // Build fully parameterized SQL — no user input is concatenated as raw strings
     const filterWhere =
-      filterClauses.length > 0 ? ` AND ${filterClauses.join(" AND ")}` : "";
-    const fullWhere = baseWhere + filterWhere;
+      filterClauses.length > 0
+        ? sql` AND ${sql.join(filterClauses, sql.raw(" AND "))}`
+        : sql``;
 
     const rows = await db.execute(
-      sql.raw(
-        `SELECT id, data, created_at, updated_at FROM entities WHERE ${fullWhere} ORDER BY ${orderBy} LIMIT ${limitVal} OFFSET ${skipVal}`,
-      ),
+      sql`SELECT id, data, created_at, updated_at FROM entities WHERE app_id = ${appId} AND entity_name = ${entity}${filterWhere} ORDER BY ${orderBy} LIMIT ${limitVal} OFFSET ${skipVal}`,
     );
 
     res.json(rows.rows.map((r: Record<string, unknown>) =>
