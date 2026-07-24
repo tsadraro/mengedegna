@@ -138,7 +138,7 @@ export default function FAQ() {
           <div className="grid sm:grid-cols-3 gap-3">
             {[
               { window: "> 24 hours before", label: "FULL REFUND", pct: "100%", cls: "border-accent/40 bg-accent/5 text-accent" },
-              { window: "18 – 24 hours before", label: "HALF REFUND", pct: "50%", cls: "border-primary/40 bg-primary/5 text-primary" },
+              { window: "12 – 24 hours before", label: "HALF REFUND", pct: "50%", cls: "border-primary/40 bg-primary/5 text-primary" },
               { window: "< 18 hours before", label: "NO REFUND", pct: "0%", cls: "border-destructive/40 bg-destructive/5 text-destructive" },
             ].map((r) => (
               <div key={r.label} className={`border rounded-sm p-4 text-center ${r.cls}`}>

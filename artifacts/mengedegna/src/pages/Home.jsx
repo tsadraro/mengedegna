@@ -144,12 +144,12 @@ export default function Home() {
               <div className="font-mono text-xs opacity-70">100% refund</div>
             </div>
             <div className="border-2 border-primary-foreground/60 bg-primary-foreground/20 rounded-sm p-5 text-center">
-              <div className="font-mono font-bold text-xs tracking-wider mb-2 opacity-60">18 – 24 HOURS</div>
+              <div className="font-mono font-bold text-xs tracking-wider mb-2 opacity-60">12 – 24 HOURS</div>
               <div className="font-display font-extrabold text-3xl mb-1">HALF</div>
               <div className="font-mono text-xs opacity-70">50% refund</div>
             </div>
             <div className="border-2 border-primary-foreground bg-primary-foreground/30 rounded-sm p-5 text-center">
-              <div className="font-mono font-bold text-xs tracking-wider mb-2 opacity-60">WITHIN 18 HOURS</div>
+              <div className="font-mono font-bold text-xs tracking-wider mb-2 opacity-60">WITHIN 12 HOURS</div>
               <div className="font-display font-extrabold text-3xl mb-1">NONE</div>
               <div className="font-mono text-xs opacity-70">No refund</div>
             </div>
