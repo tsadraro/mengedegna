@@ -113,6 +113,27 @@ function optionalAuth(req: Request): {
   return verifyToken(token);
 }
 
+/**
+ * Verify that the request carries a valid JWT **and** that the token's
+ * embedded appId matches the :appId route parameter.  Returns the claim on
+ * success, or sends the appropriate error response and returns null.
+ */
+function requireAppAuth(
+  req: Request,
+  res: Response,
+): { userId: string; appId: string; email: string; role: string } | null {
+  const claim = optionalAuth(req);
+  if (!claim) {
+    res.status(401).json({ message: "Unauthorized" });
+    return null;
+  }
+  if (claim.appId !== req.params.appId) {
+    res.status(403).json({ message: "Forbidden" });
+    return null;
+  }
+  return claim;
+}
+
 // ---------------------------------------------------------------------------
 // Public app settings  (hit before any auth)
 // GET /api/apps/public/prod/public-settings/by-id/:appId
@@ -369,11 +390,8 @@ router.post(
 router.get(
   "/apps/:appId/entities/User/me",
   async (req: Request, res: Response) => {
-    const claim = optionalAuth(req);
-    if (!claim) {
-      res.status(401).json({ message: "Unauthorized" });
-      return;
-    }
+    const claim = requireAppAuth(req, res);
+    if (!claim) return;
     const users = await db
       .select()
       .from(usersTable)
@@ -397,15 +415,15 @@ router.get(
 router.put(
   "/apps/:appId/entities/User/me",
   async (req: Request, res: Response) => {
-    const claim = optionalAuth(req);
-    if (!claim) {
-      res.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-    const { name, role } = req.body as { name?: string; role?: string };
+    const claim = requireAppAuth(req, res);
+    if (!claim) return;
+    // Only allow updating non-sensitive fields; role changes are never
+    // permitted via self-service — an admin must change roles through a
+    // privileged endpoint.
+    const { name } = req.body as { name?: string };
     await db
       .update(usersTable)
-      .set({ name: name ?? undefined, role: role ?? undefined })
+      .set({ name: name ?? undefined })
       .where(eq(usersTable.id, claim.userId));
     const users = await db
       .select()
@@ -436,6 +454,7 @@ router.put(
 router.get(
   "/apps/:appId/entities/:entity",
   async (req: Request, res: Response) => {
+    if (!requireAppAuth(req, res)) return;
     const { appId, entity } = req.params;
     const { q, sort, limit, skip } = req.query as Record<string, string | undefined>;
 
@@ -481,6 +500,7 @@ router.get(
 router.get(
   "/apps/:appId/entities/:entity/:id",
   async (req: Request, res: Response) => {
+    if (!requireAppAuth(req, res)) return;
     const { appId, entity, id } = req.params;
     const rows = await db
       .select()
@@ -504,6 +524,7 @@ router.get(
 router.post(
   "/apps/:appId/entities/:entity",
   async (req: Request, res: Response) => {
+    if (!requireAppAuth(req, res)) return;
     const { appId, entity } = req.params;
     const id = crypto.randomUUID();
     const data = req.body as Record<string, unknown>;
@@ -522,6 +543,7 @@ router.post(
 router.put(
   "/apps/:appId/entities/:entity/:id",
   async (req: Request, res: Response) => {
+    if (!requireAppAuth(req, res)) return;
     const { appId, entity, id } = req.params;
     const patch = req.body as Record<string, unknown>;
     delete patch["id"];
@@ -558,6 +580,7 @@ router.put(
 router.delete(
   "/apps/:appId/entities/:entity/:id",
   async (req: Request, res: Response) => {
+    if (!requireAppAuth(req, res)) return;
     const { appId, entity, id } = req.params;
     await db
       .delete(entitiesTable)
@@ -576,6 +599,7 @@ router.delete(
 router.post(
   "/apps/:appId/entities/:entity/bulk",
   async (req: Request, res: Response) => {
+    if (!requireAppAuth(req, res)) return;
     const { appId, entity } = req.params;
     const items = Array.isArray(req.body) ? req.body : [req.body];
     const created: Record<string, unknown>[] = [];
