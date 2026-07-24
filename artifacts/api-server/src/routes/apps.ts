@@ -216,8 +216,7 @@ router.post(
       otp,
       otpExpires,
     });
-    // In production you would email the OTP; for dev we return it
-    res.json({ message: "Registration successful. Check your email for OTP.", otp });
+    res.json({ message: "Registration successful. Check your email for OTP." });
   },
 );
 
@@ -286,7 +285,7 @@ router.post(
       .update(usersTable)
       .set({ otp, otpExpires })
       .where(eq(usersTable.id, user.id));
-    res.json({ message: "OTP sent", otp });
+    res.json({ message: "OTP sent" });
   },
 );
 
@@ -318,7 +317,7 @@ router.post(
       .update(usersTable)
       .set({ resetToken, resetTokenExpires })
       .where(eq(usersTable.id, user.id));
-    res.json({ message: "Reset token generated", reset_token: resetToken });
+    res.json({ message: "If that email exists, a reset link was sent" });
   },
 );
 

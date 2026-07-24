@@ -25,7 +25,28 @@ app.use(
     },
   }),
 );
-app.use(cors());
+const allowedOrigins: string[] = (process.env["ALLOWED_ORIGINS"] ?? "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+// In Replit the dev domain is available as REPLIT_DEV_DOMAIN
+const replitDevDomain = process.env["REPLIT_DEV_DOMAIN"];
+if (replitDevDomain) {
+  allowedOrigins.push(`https://${replitDevDomain}`);
+}
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Allow server-to-server requests (no Origin header)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS: origin '${origin}' is not allowed`));
+    },
+    credentials: true,
+  }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

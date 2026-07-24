@@ -1,7 +1,15 @@
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import { randomBytes, randomInt } from "crypto";
 
-const JWT_SECRET = process.env["SESSION_SECRET"] ?? "mengedegna-dev-secret-fallback";
+const SESSION_SECRET = process.env["SESSION_SECRET"];
+if (!SESSION_SECRET) {
+  throw new Error(
+    "SESSION_SECRET environment variable is required but not set. " +
+      "Set it to a long, random string before starting the server.",
+  );
+}
+const JWT_SECRET: string = SESSION_SECRET;
 const JWT_EXPIRES_IN = "30d";
 
 export interface JwtPayload {
@@ -35,12 +43,9 @@ export async function comparePassword(
 }
 
 export function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return randomInt(100000, 1000000).toString();
 }
 
 export function generateResetToken(): string {
-  return (
-    Math.random().toString(36).substring(2) +
-    Math.random().toString(36).substring(2)
-  );
+  return randomBytes(32).toString("hex");
 }
