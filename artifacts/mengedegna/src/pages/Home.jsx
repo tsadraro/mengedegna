@@ -42,7 +42,7 @@ export default function Home() {
               Traverse the<br />
               <span className="gold-text">Highlands.</span>
             </h1>
-            <p className="text-lg text-muted-foreground max-w-xl leading-relaxed" style={{ lineHeight: 1.7 }}>
+            <p className="text-lg text-white max-w-xl leading-relaxed" style={{ lineHeight: 1.7, textShadow: "0 1px 4px rgba(0,0,0,0.7)" }}>
               One platform for all of Ethiopia — every culture, every region, every faith. Search live routes, select your seat, and pay with Telebirr — your e-invoice arrives in seconds.
             </p>
           </div>
