@@ -383,12 +383,8 @@ export default function Booking() {
                   <option value="" disabled>
                     {lang === "am" ? "ይምረጡ…" : "Select number of passengers…"}
                   </option>
-                  {Array.from({ length: Math.min(12, maxSeats) }, (_, i) => i + 1).map((n) => (
-                    <option key={n} value={n}>
-                      {n} {n === 1
-                        ? (lang === "am" ? "ተሳፋሪ" : "Passenger")
-                        : (lang === "am" ? "ተሳፋሪዎች" : "Passengers")}
-                    </option>
+                  {Array.from({ length: maxSeats }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>{n}</option>
                   ))}
                 </select>
                 <p className="text-xs text-muted-foreground mt-2">
