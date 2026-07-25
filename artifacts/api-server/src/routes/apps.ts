@@ -206,6 +206,7 @@ router.post(
       appId,
       email: user.email,
       role: user.role,
+      operator_id: user.operatorId ?? undefined,
     });
     res.json({
       access_token,
@@ -214,6 +215,7 @@ router.post(
         email: user.email,
         name: user.name,
         role: user.role,
+        operator_id: user.operatorId ?? null,
         email_verified: user.emailVerified,
       },
     });
@@ -293,6 +295,7 @@ router.post(
       appId,
       email: user.email,
       role: user.role,
+      operator_id: user.operatorId ?? undefined,
     });
     res.json({ access_token });
   },
@@ -425,6 +428,7 @@ router.get(
       email: user.email,
       name: user.name,
       role: user.role,
+      operator_id: user.operatorId ?? null,
       email_verified: user.emailVerified,
       created_date: user.createdAt?.toISOString(),
     });
@@ -491,6 +495,14 @@ router.get(
       }
     }
 
+    // Operator access control: if authenticated operator, auto-scope Route/Booking to their operator_id
+    const authClaim = optionalAuth(req);
+    if (authClaim?.role === "operator" && authClaim.operator_id) {
+      if (entity === "Route" || entity === "Booking") {
+        filterClauses.push(sql`data @> ${JSON.stringify({ operator: authClaim.operator_id })}::jsonb`);
+      }
+    }
+
     const orderBy = buildOrderBy(sort);
     const limitVal = Math.min(Number(limit ?? 100), 1000);
     const skipVal = Number(skip ?? 0);
@@ -544,12 +556,16 @@ router.get(
 router.post(
   "/apps/:appId/entities/:entity",
   async (req: Request, res: Response) => {
-    if (!requireAppAuth(req, res)) return;
+    const claim = requireAppAuth(req, res);
+    if (!claim) return;
     const { appId, entity } = req.params;
     const id = crypto.randomUUID();
     const data = req.body as Record<string, unknown>;
-    // Remove any id from the body (we generate it)
     delete data["id"];
+    // Operators can only create routes for their own operator_id
+    if (entity === "Route" && claim.role === "operator" && claim.operator_id) {
+      data["operator"] = claim.operator_id;
+    }
     await db.insert(entitiesTable).values({ id, appId, entityName: entity, data });
     const rows = await db
       .select()
@@ -563,7 +579,8 @@ router.post(
 router.put(
   "/apps/:appId/entities/:entity/:id",
   async (req: Request, res: Response) => {
-    if (!requireAppAuth(req, res)) return;
+    const claim = requireAppAuth(req, res);
+    if (!claim) return;
     const { appId, entity, id } = req.params;
     const patch = req.body as Record<string, unknown>;
     delete patch["id"];
@@ -583,6 +600,14 @@ router.put(
       res.status(404).json({ message: "Not found" });
       return;
     }
+    // Operator access control for Route updates
+    if (entity === "Route" && claim.role === "operator" && claim.operator_id) {
+      const existingOp = (rows[0]!.data as Record<string, unknown>)["operator"];
+      if (existingOp !== claim.operator_id) {
+        res.status(403).json({ message: "Cannot modify another operator's route" });
+        return;
+      }
+    }
     const merged = { ...(rows[0]!.data as Record<string, unknown>), ...patch };
     await db
       .update(entitiesTable)
@@ -600,8 +625,24 @@ router.put(
 router.delete(
   "/apps/:appId/entities/:entity/:id",
   async (req: Request, res: Response) => {
-    if (!requireAppAuth(req, res)) return;
+    const claim = requireAppAuth(req, res);
+    if (!claim) return;
     const { appId, entity, id } = req.params;
+
+    // Operator access control for Route deletes
+    if (entity === "Route" && claim.role === "operator" && claim.operator_id) {
+      const rows = await db
+        .select()
+        .from(entitiesTable)
+        .where(and(eq(entitiesTable.appId, appId), eq(entitiesTable.entityName, entity), eq(entitiesTable.id, id)));
+      if (rows.length === 0) { res.status(404).json({ message: "Not found" }); return; }
+      const existingOp = (rows[0]!.data as Record<string, unknown>)["operator"];
+      if (existingOp !== claim.operator_id) {
+        res.status(403).json({ message: "Cannot delete another operator's route" });
+        return;
+      }
+    }
+
     await db
       .delete(entitiesTable)
       .where(
@@ -642,5 +683,247 @@ router.post(
 router.post("/apps/:appId/analytics/track/batch", (_req, res) => {
   res.json({ ok: true });
 });
+
+// ---------------------------------------------------------------------------
+// Atomic booking confirmation
+// POST /api/apps/:appId/atomic/confirm
+// Confirms held bookings inside a single DB transaction, preventing double-booking.
+// ---------------------------------------------------------------------------
+router.post(
+  "/apps/:appId/atomic/confirm",
+  async (req: Request, res: Response) => {
+    const claim = requireAppAuth(req, res);
+    if (!claim) return;
+    const { appId } = req.params;
+    const { heldBookingIds, routeId, paymentMethod, deliveryMethod, invoiceBase, refundPolicy } =
+      req.body as {
+        heldBookingIds?: string[];
+        routeId?: string;
+        paymentMethod?: string;
+        deliveryMethod?: string;
+        invoiceBase?: string;
+        refundPolicy?: string;
+      };
+
+    if (!heldBookingIds?.length || !routeId) {
+      res.status(400).json({ message: "heldBookingIds and routeId are required" });
+      return;
+    }
+
+    try {
+      const result = await db.transaction(async (tx) => {
+        // Lock the route row so no concurrent confirmation can race against it
+        const routeRows = await tx.execute(
+          sql`SELECT id, data FROM entities WHERE id = ${routeId} AND app_id = ${appId} AND entity_name = 'Route' FOR UPDATE`,
+        );
+        if (routeRows.rows.length === 0)
+          throw Object.assign(new Error("Route not found"), { status: 404 });
+
+        const routeData = routeRows.rows[0].data as Record<string, unknown>;
+
+        // Operator may only confirm on their own routes
+        if (claim.role === "operator" && claim.operator_id && routeData["operator"] !== claim.operator_id) {
+          throw Object.assign(new Error("Cannot book on another operator's route"), { status: 403 });
+        }
+
+        const availableSeats = Number(routeData["available_seats"] ?? 0);
+        const base = invoiceBase ?? `AK-${Date.now().toString().slice(-8)}`;
+        const confirmed: Record<string, unknown>[] = [];
+
+        // Lock and verify each held booking
+        for (let i = 0; i < heldBookingIds.length; i++) {
+          const heldId = heldBookingIds[i];
+          const holdRows = await tx.execute(
+            sql`SELECT id, data FROM entities WHERE id = ${heldId} AND app_id = ${appId} AND entity_name = 'Booking' FOR UPDATE`,
+          );
+
+          if (holdRows.rows.length === 0) {
+            throw Object.assign(new Error("Your seat hold has expired. Please re-select seats."), { status: 409 });
+          }
+
+          const holdData = holdRows.rows[0].data as Record<string, unknown>;
+
+          if (holdData["status"] !== "held") {
+            throw Object.assign(new Error("Booking is no longer in held state."), { status: 409 });
+          }
+
+          const expiresAt = holdData["hold_expires_at"] as string | null;
+          if (expiresAt && new Date(expiresAt) < new Date()) {
+            throw Object.assign(new Error("Your seat hold has expired. Please re-select seats."), { status: 409 });
+          }
+
+          const invoiceNum = heldBookingIds.length === 1 ? base : `${base}-${i + 1}`;
+          const paymentStatus = paymentMethod === "cash" ? "cash" : "online";
+
+          const updatedData = {
+            ...holdData,
+            status: "confirmed",
+            payment_method: paymentMethod,
+            payment_status: paymentStatus,
+            delivery_method: deliveryMethod,
+            invoice_number: invoiceNum,
+            qr_data: invoiceNum,
+            refund_policy: refundPolicy,
+            hold_expires_at: null,
+            confirmed_at: new Date().toISOString(),
+          };
+
+          await tx.execute(
+            sql`UPDATE entities SET data = ${JSON.stringify(updatedData)}::jsonb, updated_at = NOW() WHERE id = ${heldId}`,
+          );
+
+          confirmed.push({ id: heldId, ...updatedData });
+        }
+
+        // Atomically decrement available_seats
+        const newSeats = Math.max(0, availableSeats - heldBookingIds.length);
+        await tx.execute(
+          sql`UPDATE entities SET data = jsonb_set(data, '{available_seats}', ${String(newSeats)}::jsonb), updated_at = NOW() WHERE id = ${routeId}`,
+        );
+
+        return confirmed;
+      });
+
+      res.json(result);
+    } catch (err: unknown) {
+      const e = err as { status?: number; message?: string };
+      const status = e.status ?? 500;
+      if (status === 500) console.error("Atomic confirm error:", err);
+      res.status(status).json({ message: e.message ?? "Booking confirmation failed" });
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Cancel a booking — restores seat atomically
+// POST /api/apps/:appId/entities/Booking/:id/cancel
+// ---------------------------------------------------------------------------
+router.post(
+  "/apps/:appId/entities/Booking/:id/cancel",
+  async (req: Request, res: Response) => {
+    const claim = requireAppAuth(req, res);
+    if (!claim) return;
+    const { appId, id } = req.params;
+
+    try {
+      const result = await db.transaction(async (tx) => {
+        const bookingRows = await tx.execute(
+          sql`SELECT id, data FROM entities WHERE id = ${id} AND app_id = ${appId} AND entity_name = 'Booking' FOR UPDATE`,
+        );
+        if (bookingRows.rows.length === 0)
+          throw Object.assign(new Error("Booking not found"), { status: 404 });
+
+        const bookingData = bookingRows.rows[0].data as Record<string, unknown>;
+
+        if (bookingData["status"] === "cancelled")
+          throw Object.assign(new Error("Booking is already cancelled"), { status: 409 });
+
+        // Permission: owner, operator who owns the route, or admin
+        const isOwner = bookingData["booked_by"] === claim.userId;
+        const isOperatorOwner =
+          claim.role === "operator" &&
+          claim.operator_id &&
+          bookingData["operator"] === claim.operator_id;
+        const isAdmin = claim.role === "admin";
+
+        if (!isOwner && !isOperatorOwner && !isAdmin)
+          throw Object.assign(new Error("You cannot cancel this booking"), { status: 403 });
+
+        const updatedData = {
+          ...bookingData,
+          status: "cancelled",
+          cancelled_at: new Date().toISOString(),
+        };
+
+        await tx.execute(
+          sql`UPDATE entities SET data = ${JSON.stringify(updatedData)}::jsonb, updated_at = NOW() WHERE id = ${id}`,
+        );
+
+        // Restore seat to route
+        const routeId = bookingData["route_id"] as string | undefined;
+        if (routeId) {
+          await tx.execute(
+            sql`UPDATE entities
+                SET data = jsonb_set(data, '{available_seats}', (COALESCE((data->>'available_seats')::int,0)+1)::text::jsonb),
+                    updated_at = NOW()
+                WHERE id = ${routeId} AND app_id = ${appId} AND entity_name = 'Route'`,
+          );
+        }
+
+        return { id, ...updatedData };
+      });
+
+      res.json(result);
+    } catch (err: unknown) {
+      const e = err as { status?: number; message?: string };
+      const status = e.status ?? 500;
+      if (status === 500) console.error("Cancel booking error:", err);
+      res.status(status).json({ message: e.message ?? "Cancellation failed" });
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Admin: list all users
+// GET /api/apps/:appId/auth/users
+// ---------------------------------------------------------------------------
+router.get(
+  "/apps/:appId/auth/users",
+  async (req: Request, res: Response) => {
+    const claim = requireAppAuth(req, res);
+    if (!claim) return;
+    if (claim.role !== "admin") { res.status(403).json({ message: "Admin only" }); return; }
+    const { appId } = req.params;
+    const users = await db.select().from(usersTable).where(eq(usersTable.appId, appId));
+    res.json(
+      users.map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        operator_id: u.operatorId ?? null,
+        email_verified: u.emailVerified,
+      })),
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Admin: update user role / operator_id
+// PUT /api/apps/:appId/auth/users/:userId
+// ---------------------------------------------------------------------------
+router.put(
+  "/apps/:appId/auth/users/:userId",
+  async (req: Request, res: Response) => {
+    const claim = requireAppAuth(req, res);
+    if (!claim) return;
+    if (claim.role !== "admin") { res.status(403).json({ message: "Admin only" }); return; }
+    const { appId, userId } = req.params;
+    const { role, operator_id } = req.body as { role?: string; operator_id?: string };
+
+    const updateFields: Record<string, unknown> = {};
+    if (role !== undefined) updateFields["role"] = role;
+    if (operator_id !== undefined) updateFields["operatorId"] = operator_id || null;
+
+    if (Object.keys(updateFields).length > 0) {
+      await db.update(usersTable).set(updateFields as Parameters<typeof usersTable.$inferInsert>[0]).where(
+        and(eq(usersTable.id, userId), eq(usersTable.appId, appId)),
+      );
+    }
+
+    const users = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+    const user = users[0];
+    if (!user) { res.status(404).json({ message: "User not found" }); return; }
+
+    res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      operator_id: user.operatorId ?? null,
+      email_verified: user.emailVerified,
+    });
+  },
+);
 
 export default router;

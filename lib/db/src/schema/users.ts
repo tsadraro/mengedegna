@@ -12,6 +12,7 @@ export const usersTable = pgTable(
     emailVerified: boolean("email_verified").notNull().default(false),
     otp: text("otp"),
     otpExpires: timestamp("otp_expires"),
+    operatorId: text("operator_id"),
     resetToken: text("reset_token"),
     resetTokenExpires: timestamp("reset_token_expires"),
     createdAt: timestamp("created_at").defaultNow(),

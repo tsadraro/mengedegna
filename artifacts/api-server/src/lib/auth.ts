@@ -17,6 +17,7 @@ export interface JwtPayload {
   appId: string;
   email: string;
   role: string;
+  operator_id?: string;
 }
 
 export function signToken(payload: JwtPayload): string {

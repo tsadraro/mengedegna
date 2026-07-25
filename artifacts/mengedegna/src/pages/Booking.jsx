@@ -153,12 +153,11 @@ export default function Booking() {
     setStep(1);
   };
 
-  // ── Payment confirmed: update held bookings → confirmed ───────────────────
+  // ── Payment confirmed: atomically update held bookings → confirmed ────────
   const handlePaid = async (paymentMethod = "telebirr") => {
     setCreating(true);
     setHoldError(null);
 
-    // Check hold expiry
     if (holdExpiresAt && new Date(holdExpiresAt) < new Date()) {
       setHoldError("Your seat hold has expired. Please re-select your seats.");
       setHeldBookingIds([]);
@@ -174,27 +173,30 @@ export default function Booking() {
     const baseInvoice = `AK-${Date.now().toString().slice(-8)}`;
 
     try {
-      let confirmed = [];
-
       if (heldBookingIds.length > 0) {
-        // Update held bookings → confirmed
-        for (let i = 0; i < heldBookingIds.length; i++) {
-          const id = heldBookingIds[i];
-          const invoiceNum = seats.length === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`;
-          try {
-            const updated = await base44.entities.Booking.update(id, {
-              status: "confirmed",
-              payment_method: paymentMethod,
-              invoice_number: invoiceNum,
-              qr_data: invoiceNum,
-              refund_policy: refundPolicy,
-              delivery_method: deliveryMethod,
-              hold_expires_at: null,
-            });
-            confirmed.push(updated ?? { id, seat_number: seats[i], invoice_number: invoiceNum });
-          } catch {
-            // Booking no longer exists — seat was taken
-            setHoldError("One or more seats are no longer available. Please re-select seats.");
+        // ── Atomic path: one server transaction, no race conditions ──
+        const token = localStorage.getItem("base44_access_token");
+        const resp = await fetch("/api/apps/mengedegna/atomic/confirm", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            heldBookingIds,
+            routeId: route.id,
+            paymentMethod,
+            deliveryMethod,
+            invoiceBase: baseInvoice,
+            refundPolicy,
+          }),
+        });
+
+        const data = await resp.json().catch(() => ({}));
+
+        if (!resp.ok) {
+          if (resp.status === 409) {
+            setHoldError(data.message || "Seat conflict. Please re-select seats.");
             for (const rid of heldBookingIds) {
               try { await base44.entities.Booking.delete(rid); } catch {}
             }
@@ -204,9 +206,12 @@ export default function Booking() {
             setCreating(false);
             return;
           }
+          throw new Error(data.message || "Confirmation failed");
         }
+
+        setBookings(Array.isArray(data) ? data : [data]);
       } else {
-        // Fallback: create confirmed bookings directly
+        // ── Fallback: no hold IDs — create confirmed bookings directly ──
         const records = seats.map((seat, i) => ({
           route_id: route.id,
           passenger_name: passengers[i]?.name || name,
@@ -221,40 +226,25 @@ export default function Booking() {
           fare: totalPerSeat,
           status: "confirmed",
           payment_method: paymentMethod,
+          payment_status: paymentMethod === "cash" ? "cash" : "online",
           invoice_number: seats.length === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`,
           qr_data: seats.length === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`,
           refund_policy: refundPolicy,
           delivery_method: deliveryMethod,
         }));
         const created = await base44.entities.Booking.bulkCreate(records);
-        confirmed = Array.isArray(created) ? created : records;
+        // Decrement seats (non-atomic fallback)
+        await base44.entities.Route.update(route.id, {
+          available_seats: Math.max(0, route.available_seats - seats.length),
+        });
+        setBookings(Array.isArray(created) ? created : records);
       }
 
-      await base44.entities.Route.update(route.id, {
-        available_seats: Math.max(0, route.available_seats - seats.length),
-      });
-
-      setBookings(confirmed);
       setStep(4);
       setShowConfirmAlert(true);
       setTimeout(() => setShowConfirmAlert(false), 6000);
-    } catch {
-      // Last-resort fallback — show ticket with local data
-      setBookings(
-        seats.map((seat, i) => ({
-          route_id: route.id, passenger_name: name, phone, seat_number: seat,
-          from_city: route.from_city, to_city: route.to_city, operator: route.operator,
-          departure_date: route.departure_date, departure_time: route.departure_time,
-          arrival_time: route.arrival_time, fare: totalPerSeat, status: "confirmed",
-          payment_method: paymentMethod,
-          invoice_number: seats.length === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`,
-          qr_data: seats.length === 1 ? baseInvoice : `${baseInvoice}-${i + 1}`,
-          refund_policy: refundPolicy, delivery_method: deliveryMethod,
-        }))
-      );
-      setStep(4);
-      setShowConfirmAlert(true);
-      setTimeout(() => setShowConfirmAlert(false), 6000);
+    } catch (err) {
+      setHoldError(err.message || "Payment confirmation failed. Please try again.");
     } finally {
       setCreating(false);
     }

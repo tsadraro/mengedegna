@@ -4,7 +4,7 @@ import { base44 } from "@/api/base44Client";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import EInvoice from "@/components/EInvoice";
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Search, XCircle, AlertTriangle } from "lucide-react";
 
 export default function Ticket() {
   const [params] = useSearchParams();
@@ -14,6 +14,34 @@ export default function Ticket() {
   const [route, setRoute] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState("");
+  const [cancelDone, setCancelDone] = useState(false);
+
+  const handleCancel = async () => {
+    if (!booking?.id) return;
+    if (!window.confirm("Are you sure you want to cancel this booking? The refund policy applies. This cannot be undone.")) return;
+    setCancelling(true);
+    setCancelError("");
+    try {
+      const token = localStorage.getItem("base44_access_token");
+      const resp = await fetch(`/api/apps/mengedegna/entities/Booking/${booking.id}/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.message || "Cancellation failed");
+      setBooking((b) => ({ ...b, status: "cancelled" }));
+      setCancelDone(true);
+    } catch (e) {
+      setCancelError(e.message || "Could not cancel booking. Please contact support.");
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   useEffect(() => {
     if (searched) {
@@ -76,7 +104,51 @@ export default function Ticket() {
             </div>
           )}
 
-          {booking && !loading && !error && <EInvoice booking={booking} route={route} />}
+          {booking && !loading && !error && (
+            <div>
+              <EInvoice booking={booking} route={route} />
+
+              {/* Cancellation */}
+              {booking.status === "confirmed" && (
+                <div className="mt-6 border border-border rounded-sm p-5">
+                  <h3 className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground mb-3">CANCEL THIS BOOKING</h3>
+                  {cancelDone ? (
+                    <div className="flex items-center gap-2 text-destructive text-sm">
+                      <XCircle className="w-4 h-4" /> Booking cancelled. Refund processed per the applicable policy.
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Cancelling restores the seat to available inventory. The refund amount depends on how far in advance you cancel — check the policy on your ticket above.
+                      </p>
+                      {cancelError && (
+                        <div className="flex items-center gap-2 text-destructive text-sm mb-3 border border-destructive/30 bg-destructive/10 rounded-sm px-3 py-2">
+                          <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {cancelError}
+                        </div>
+                      )}
+                      <button
+                        onClick={handleCancel}
+                        disabled={cancelling}
+                        className="flex items-center gap-2 text-sm border border-destructive/40 text-destructive px-4 py-2.5 rounded-sm hover:bg-destructive/10 transition-all disabled:opacity-50"
+                      >
+                        {cancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                        Cancel Booking
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              {booking.status === "cancelled" && (
+                <div className="mt-6 flex items-center gap-3 border border-destructive/30 bg-destructive/10 rounded-sm px-5 py-4">
+                  <XCircle className="w-5 h-5 text-destructive flex-shrink-0" />
+                  <div>
+                    <div className="font-mono text-[10px] tracking-[0.2em] text-destructive font-bold mb-0.5">BOOKING CANCELLED</div>
+                    <p className="text-sm text-muted-foreground">This booking has been cancelled. Contact support for refund status.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
       <Footer />
