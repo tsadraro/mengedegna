@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { Disc3, Loader2 } from "lucide-react";
+import { Disc3, Loader2, Shuffle, X } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { useLang } from "@/lib/LanguageContext";
 
-// Fetch taken seats: confirmed bookings + non-expired holds
 async function fetchTakenSeats(routeId) {
   const existing = await base44.entities.Booking.filter(
     { route_id: routeId },
@@ -14,9 +14,7 @@ async function fetchTakenSeats(routeId) {
     existing
       .filter((b) => {
         if (b.status === "confirmed") return true;
-        if (b.status === "held") {
-          return b.hold_expires_at && new Date(b.hold_expires_at).getTime() > now;
-        }
+        if (b.status === "held") return b.hold_expires_at && new Date(b.hold_expires_at).getTime() > now;
         return false;
       })
       .map((b) => parseInt(b.seat_number, 10))
@@ -24,7 +22,6 @@ async function fetchTakenSeats(routeId) {
   );
 }
 
-// Check if a set of seat numbers are all adjacent (consecutive integers)
 function areAdjacent(seats) {
   if (seats.length <= 1) return true;
   const sorted = [...seats].sort((a, b) => a - b);
@@ -34,17 +31,9 @@ function areAdjacent(seats) {
   return true;
 }
 
-/**
- * SeatMap — multi-select with adjacency enforcement
- *
- * Props:
- *   route          - route object
- *   selectedSeats  - number[] of selected seat numbers
- *   onSelect       - (seats: number[]) => void
- *   maxSeats       - max seats passenger can pick (default 6)
- */
 export default function SeatMap({ route, selectedSeats = [], onSelect, maxSeats = 6 }) {
-  const [takenSeats, setTakenSeats] = useState(null); // null = loading
+  const { t, lang } = useLang();
+  const [takenSeats, setTakenSeats] = useState(null);
   const [adjacencyError, setAdjacencyError] = useState(false);
 
   useEffect(() => {
@@ -62,74 +51,137 @@ export default function SeatMap({ route, selectedSeats = [], onSelect, maxSeats 
   const gapRows = layout.gap_rows ?? [];
   const seats = Array.from({ length: total }, (_, i) => i + 1);
 
+  // Auto-pick: find first available seat (or N adjacent seats for groups)
+  const handleAutoPick = () => {
+    if (!takenSeats) return;
+    const count = selectedSeats.length > 0 ? selectedSeats.length : 1;
+    const available = seats.filter((s) => !takenSeats.has(s));
+
+    // Try to find `count` adjacent available seats
+    for (let i = 0; i <= available.length - count; i++) {
+      const candidate = available.slice(i, i + count);
+      if (candidate.length === count && areAdjacent(candidate)) {
+        onSelect(candidate);
+        return;
+      }
+    }
+    // Fallback: just pick the first available
+    if (available.length > 0) onSelect([available[0]]);
+  };
+
   const handleSeatClick = (seat) => {
     if (!takenSeats || takenSeats.has(seat)) return;
-
     let newSelected;
     if (selectedSeats.includes(seat)) {
-      // Deselect
       newSelected = selectedSeats.filter((s) => s !== seat);
     } else {
       if (selectedSeats.length >= maxSeats) return;
       newSelected = [...selectedSeats, seat];
     }
-
-    // Enforce adjacency — only allow if result is adjacent
     if (newSelected.length > 1 && !areAdjacent(newSelected)) {
       setAdjacencyError(true);
-      setTimeout(() => setAdjacencyError(false), 2000);
+      setTimeout(() => setAdjacencyError(false), 2500);
       return;
     }
-
     setAdjacencyError(false);
     onSelect(newSelected);
   };
 
+  const availableCount = takenSeats ? seats.filter((s) => !takenSeats.has(s)).length : null;
+
   return (
-    <div className="bg-card border border-border rounded-sm p-6 md:p-8">
-      <div className="flex items-center justify-between mb-4">
+    <div className="bg-card border border-border rounded-sm p-5 md:p-8">
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
         <div>
-          <h3 className="font-display font-bold text-lg">Select Your Seats</h3>
-          <p className="text-xs text-muted-foreground font-mono mt-1">
-            {route?.operator} · {route?.bus_type} · {leftCols}+{rightCols} layout
+          <h3 className="font-display font-bold text-xl">
+            {lang === "am" ? "ወንበር ይምረጡ" : lang === "or" ? "Teessoo Filadhu" : "Choose Your Seat"}
+          </h3>
+          <p className="text-sm text-muted-foreground mt-1">
+            {route?.operator} · {route?.bus_type}
+            {availableCount !== null && (
+              <span className={`ml-2 font-semibold ${availableCount <= 7 ? "text-destructive" : "text-accent"}`}>
+                · {availableCount} {lang === "am" ? "ወንበር አለ" : "seats available"}
+              </span>
+            )}
           </p>
         </div>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap justify-end">
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm border border-border" />Available</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-muted-foreground/40" />Taken</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary" />Selected</span>
-        </div>
+
+        {/* Auto-pick button */}
+        {takenSeats && (
+          <button
+            onClick={handleAutoPick}
+            className="flex items-center gap-2 text-sm border border-primary/50 text-primary px-4 py-2.5 rounded-sm hover:bg-primary/10 transition-all font-medium"
+          >
+            <Shuffle className="w-4 h-4" />
+            {lang === "am" ? "ወንበር ለኔ ምረጥ" : lang === "or" ? "Teessoo Na Filadhu" : "Pick a seat for me"}
+          </button>
+        )}
       </div>
 
-      {/* Adjacency error */}
+      {/* Legend */}
+      <div className="flex items-center gap-4 mb-6 flex-wrap">
+        {[
+          { color: "border border-border bg-card", label: lang === "am" ? "ተገኝቷል" : "Available" },
+          { color: "bg-primary", label: lang === "am" ? "የተመረጠ" : "Your seat" },
+          { color: "bg-muted-foreground/40", label: lang === "am" ? "ተሸጧል" : "Taken" },
+        ].map((item) => (
+          <div key={item.label} className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span className={`w-6 h-6 rounded-sm flex-shrink-0 ${item.color}`} />
+            {item.label}
+          </div>
+        ))}
+      </div>
+
+      {/* Error banners */}
       {adjacencyError && (
-        <div className="mb-4 px-4 py-2.5 border border-destructive/50 bg-destructive/10 rounded-sm text-xs text-destructive font-mono">
-          ⚠ Seats must be adjacent — select seats next to each other so your group sits together.
+        <div className="mb-4 flex items-start gap-3 border border-amber-500/40 bg-amber-500/10 rounded-sm px-4 py-3 text-sm text-amber-400">
+          <span className="text-lg flex-shrink-0">⚠️</span>
+          <div>
+            <div className="font-semibold mb-0.5">
+              {lang === "am" ? "አጠገብ ያሉ ወንበሮችን ይምረጡ" : "Please select seats next to each other"}
+            </div>
+            <div className="text-xs opacity-80">
+              {lang === "am"
+                ? "ቡድን ጉዞ ሲሆን ወንበሮቹ ተያያዥ መሆን አለባቸው።"
+                : 'For group travel, seats must be side-by-side. Try the "Pick for me" button above.'}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Seat count info */}
+      {/* Selected seats summary */}
       {selectedSeats.length > 0 && (
-        <div className="mb-4 px-4 py-2.5 border border-primary/40 bg-primary/5 rounded-sm text-xs font-mono text-primary">
-          {selectedSeats.length === 1
-            ? `Seat ${selectedSeats[0]} selected`
-            : `Seats ${[...selectedSeats].sort((a, b) => a - b).join(", ")} selected — your group sits together`}
-          {selectedSeats.length < maxSeats && (
-            <span className="text-muted-foreground ml-2">· click more adjacent seats (up to {maxSeats})</span>
-          )}
+        <div className="mb-5 flex items-center justify-between border border-primary/40 bg-primary/5 rounded-sm px-4 py-3">
+          <div className="text-sm font-medium text-primary">
+            ✓ {lang === "am" ? "ወንበር" : "Seat"}{selectedSeats.length > 1 ? "s" : ""}{" "}
+            <span className="font-mono font-bold">
+              {[...selectedSeats].sort((a, b) => a - b).join(", ")}
+            </span>
+            {" "}{lang === "am" ? "ተመርጧል" : "selected"}
+          </div>
+          <button
+            onClick={() => onSelect([])}
+            className="text-muted-foreground hover:text-destructive transition-colors p-1"
+            title="Clear selection"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
       {takenSeats === null ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="w-6 h-6 text-primary animate-spin" />
+        <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+          <span className="text-sm">{lang === "am" ? "ወንበሮችን እየጫነ ነው…" : "Loading seat availability…"}</span>
         </div>
       ) : (
-        <div className="max-w-md mx-auto">
-          <div className="border border-border rounded-t-[3rem] rounded-b-sm p-5 bg-secondary/40">
+        <div className="max-w-sm mx-auto">
+          {/* Bus outline */}
+          <div className="border-2 border-border rounded-t-[3rem] rounded-b-sm p-4 sm:p-6 bg-secondary/30">
             {/* Driver */}
-            <div className="flex justify-center mb-4">
-              <div className="w-12 h-12 rounded-full border-2 border-border flex items-center justify-center">
+            <div className="flex justify-center mb-5">
+              <div className="w-12 h-12 rounded-full border-2 border-border bg-card flex items-center justify-center">
                 <Disc3 className="w-6 h-6 text-muted-foreground" />
               </div>
             </div>
@@ -144,12 +196,12 @@ export default function SeatMap({ route, selectedSeats = [], onSelect, maxSeats 
                 return (
                   <React.Fragment key={rowIdx}>
                     {hasGap && (
-                      <div className="h-3 flex items-center justify-center">
+                      <div className="h-4 flex items-center justify-center">
                         <div className="w-3/4 border-t border-dashed border-border/60" />
                       </div>
                     )}
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="flex gap-1.5">
+                    <div className="flex items-center justify-center gap-3">
+                      <div className="flex gap-2">
                         {leftSeats.map((seat) => (
                           <SeatButton
                             key={seat}
@@ -160,8 +212,13 @@ export default function SeatMap({ route, selectedSeats = [], onSelect, maxSeats 
                           />
                         ))}
                       </div>
-                      <div className="w-8" />
-                      <div className="flex gap-1.5">
+                      {/* Aisle */}
+                      <div className="w-4 sm:w-6 text-center">
+                        {rowIdx === Math.floor(rows / 2) && (
+                          <div className="text-[8px] text-muted-foreground/40 rotate-90 whitespace-nowrap">aisle</div>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
                         {rightSeats.map((seat) => (
                           <SeatButton
                             key={seat}
@@ -178,6 +235,13 @@ export default function SeatMap({ route, selectedSeats = [], onSelect, maxSeats 
               })}
             </div>
           </div>
+
+          {/* Help text */}
+          <p className="text-center text-xs text-muted-foreground mt-4">
+            {lang === "am"
+              ? `እስከ ${maxSeats} ወንበር መምረጥ ይችላሉ። ቡድን ከሆኑ ተያያዥ ወንበሮችን ይምረጡ።`
+              : `Tap a seat to select it. You can pick up to ${maxSeats} seats for your group.`}
+          </p>
         </div>
       )}
     </div>
@@ -189,12 +253,13 @@ function SeatButton({ seat, isTaken, isSelected, onClick }) {
     <button
       disabled={isTaken}
       onClick={() => onClick(seat)}
-      className={`w-7 h-7 rounded-sm text-[10px] font-mono flex items-center justify-center transition-all ${
+      aria-label={`Seat ${seat}${isTaken ? " (taken)" : isSelected ? " (selected)" : ""}`}
+      className={`w-10 h-10 sm:w-11 sm:h-11 rounded-md text-xs font-bold flex items-center justify-center transition-all select-none touch-manipulation ${
         isTaken
-          ? "bg-muted-foreground/30 cursor-not-allowed text-muted-foreground/60"
+          ? "bg-muted-foreground/25 cursor-not-allowed text-muted-foreground/40"
           : isSelected
-          ? "bg-primary text-primary-foreground scale-110 shadow-lg"
-          : "border border-border hover:border-primary hover:bg-primary/10"
+          ? "bg-primary text-primary-foreground scale-105 shadow-md shadow-primary/30 ring-2 ring-primary/50"
+          : "border-2 border-border hover:border-primary hover:bg-primary/10 active:scale-95 cursor-pointer"
       }`}
     >
       {seat}

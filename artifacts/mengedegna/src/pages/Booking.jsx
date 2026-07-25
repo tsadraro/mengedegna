@@ -8,8 +8,9 @@ import EInvoice from "@/components/EInvoice";
 import {
   ArrowRight, ArrowLeft, Check, ShieldAlert, Loader2, Bus, MapPin,
   UserCheck, Banknote, Bell, Clock, PartyPopper, Armchair, Users,
-  Globe, Ticket, MessageSquare, AlertTriangle,
+  Globe, Ticket, MessageSquare, AlertTriangle, Smartphone,
 } from "lucide-react";
+import { useLang } from "@/lib/LanguageContext";
 import { getRefundPolicyForBooking } from "@/lib/refundPolicy";
 import { SEATING_RULE } from "@/lib/operatorProfiles";
 import SeatMap from "@/components/SeatMap";
@@ -19,6 +20,7 @@ import TripComparison from "@/components/TripComparison";
 export default function Booking() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const { t, lang } = useLang();
   const routeId = params.get("route");
 
   const [route, setRoute] = useState(null);
@@ -51,8 +53,8 @@ export default function Booking() {
   const [holdError, setHoldError] = useState(null);
   const [holdLoading, setHoldLoading] = useState(false);
 
-  // Delivery method
-  const [deliveryMethod, setDeliveryMethod] = useState(null); // "boarding-pass" | "sms"
+  // Delivery method — default to digital boarding pass (most user-friendly)
+  const [deliveryMethod, setDeliveryMethod] = useState("boarding-pass");
 
   // Post-payment
   const [bookings, setBookings] = useState([]);
@@ -460,91 +462,88 @@ export default function Booking() {
           {step === 2 && (
             <div className="max-w-lg mx-auto">
               <div className="text-center mb-8">
-                <div className="font-mono text-[11px] tracking-[0.3em] text-primary mb-3">STEP 2 OF 4</div>
-                <h2 className="heading-mega text-3xl sm:text-4xl">How to receive your ticket?</h2>
-                <p className="text-muted-foreground text-sm mt-3">
-                  Choose how you'd like your ticket delivered after payment is confirmed.
+                <div className="text-4xl mb-3">🎟️</div>
+                <h2 className="font-display font-bold text-2xl sm:text-3xl">
+                  {lang === "am" ? "ቲኬቱን እንዴት ይቀበላሉ?" : "How would you like your ticket?"}
+                </h2>
+                <p className="text-muted-foreground text-sm mt-2">
+                  {lang === "am"
+                    ? "ክፍያ ከተከፈለ በኋላ ቲኬት እንዴት እንደሚደርስዎ ይምረጡ።"
+                    : "Choose how to receive your ticket after payment."}
                 </p>
               </div>
 
-              {/* Seat hold countdown */}
               {holdExpiresAt && <HoldCountdown expiresAt={holdExpiresAt} seats={selectedSeats} />}
 
-              <div className="space-y-4 mt-6">
-                {/* Boarding Pass */}
-                <button
-                  onClick={() => setDeliveryMethod("boarding-pass")}
-                  className={`w-full text-left border rounded-sm p-6 transition-all ${
-                    deliveryMethod === "boarding-pass"
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/50"
-                  }`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className={`w-10 h-10 rounded-sm flex items-center justify-center flex-shrink-0 ${
-                      deliveryMethod === "boarding-pass" ? "bg-primary/20" : "bg-secondary"
-                    }`}>
-                      <Ticket className={`w-5 h-5 ${deliveryMethod === "boarding-pass" ? "text-primary" : "text-muted-foreground"}`} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        <div className="font-display font-bold">Digital Boarding Pass</div>
-                        {deliveryMethod === "boarding-pass" && (
-                          <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                            <Check className="w-3 h-3 text-primary-foreground" />
-                          </div>
-                        )}
+              <div className="space-y-3 mt-6">
+                {[
+                  {
+                    value: "boarding-pass",
+                    icon: <Ticket className="w-7 h-7" />,
+                    emoji: "📱",
+                    title: lang === "am" ? "ዲጂታል ቲኬት" : "Digital Ticket",
+                    desc: lang === "am"
+                      ? "ቲኬቱን በስልክ ላይ ያዩ። ሲሳፈሩ ያሳዩ።"
+                      : "View your ticket on your phone. Show it when boarding.",
+                    recommended: true,
+                  },
+                  {
+                    value: "sms",
+                    icon: <Smartphone className="w-7 h-7" />,
+                    emoji: "💬",
+                    title: lang === "am" ? "ኤስኤምኤስ ወደ ስልኬ" : "SMS to my phone",
+                    desc: lang === "am"
+                      ? `ምዝገባ ዝርዝር ወደ +251 ${phone} እንልካለን።`
+                      : `Booking details sent to +251 ${phone}.`,
+                    recommended: false,
+                  },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setDeliveryMethod(opt.value)}
+                    className={`w-full text-left border-2 rounded-sm p-5 transition-all relative ${
+                      deliveryMethod === opt.value
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:border-primary/40 hover:bg-secondary/40"
+                    }`}
+                  >
+                    {opt.recommended && (
+                      <span className="absolute top-3 right-3 text-[10px] font-mono font-bold bg-primary/20 text-primary px-2 py-0.5 rounded-sm">
+                        {lang === "am" ? "ተወዳጅ" : "RECOMMENDED"}
+                      </span>
+                    )}
+                    <div className="flex items-center gap-4">
+                      <div className={`w-14 h-14 rounded-sm flex items-center justify-center flex-shrink-0 text-2xl ${
+                        deliveryMethod === opt.value ? "bg-primary/15" : "bg-secondary"
+                      }`}>
+                        {opt.emoji}
                       </div>
-                      <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-                        A formatted digital ticket with your name, route, seat number, and QR code — viewable in-app. Show it at boarding with valid ID.
-                      </p>
-                    </div>
-                  </div>
-                </button>
-
-                {/* SMS */}
-                <button
-                  onClick={() => setDeliveryMethod("sms")}
-                  className={`w-full text-left border rounded-sm p-6 transition-all ${
-                    deliveryMethod === "sms"
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/50"
-                  }`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className={`w-10 h-10 rounded-sm flex items-center justify-center flex-shrink-0 ${
-                      deliveryMethod === "sms" ? "bg-primary/20" : "bg-secondary"
-                    }`}>
-                      <MessageSquare className={`w-5 h-5 ${deliveryMethod === "sms" ? "text-primary" : "text-muted-foreground"}`} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        <div className="font-display font-bold">SMS Summary</div>
-                        {deliveryMethod === "sms" && (
-                          <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                            <Check className="w-3 h-3 text-primary-foreground" />
-                          </div>
-                        )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-display font-bold text-base">{opt.title}</span>
+                          {deliveryMethod === opt.value && (
+                            <span className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                              <Check className="w-3 h-3 text-primary-foreground" />
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{opt.desc}</p>
                       </div>
-                      <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-                        A concise text message with your operator, date, time, seat number, and booking reference sent to{" "}
-                        <span className="font-mono text-foreground">+251 {phone}</span>.
-                      </p>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                ))}
               </div>
 
               <button
-                disabled={!deliveryMethod}
                 onClick={() => setStep(3)}
-                className="mt-8 w-full bg-primary text-primary-foreground font-semibold py-3.5 rounded-sm hover:brightness-110 transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+                className="mt-6 w-full bg-primary text-primary-foreground font-bold py-4 rounded-sm hover:brightness-110 transition-all flex items-center justify-center gap-2 text-base"
               >
-                Proceed to Payment <ArrowRight className="w-4 h-4" />
+                {lang === "am" ? "ወደ ክፍያ ይቀጥሉ" : "Continue to Payment"} <ArrowRight className="w-5 h-5" />
               </button>
               <div className="text-center mt-4">
                 <button onClick={handleReleaseHolds} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
-                  <ArrowLeft className="w-4 h-4" /> Back — change seats
+                  <ArrowLeft className="w-4 h-4" />
+                  {lang === "am" ? "ተመለስ — ወንበር ይቀይሩ" : "Back — change seats"}
                 </button>
               </div>
             </div>
@@ -554,16 +553,48 @@ export default function Booking() {
           {step === 3 && (
             <div>
               {holdExpiresAt && <HoldCountdown expiresAt={holdExpiresAt} seats={selectedSeats} className="mb-6" />}
+
+              {/* Big total display — visible to all */}
+              <div className="bg-card border-2 border-primary/30 rounded-sm p-6 mb-6 text-center">
+                <p className="text-sm text-muted-foreground mb-1">
+                  {lang === "am" ? "ጠቅላላ ክፍያ" : "Total to Pay"}
+                </p>
+                <div className="font-display font-extrabold text-4xl sm:text-5xl text-primary">
+                  {grandTotal.toLocaleString()}
+                  <span className="text-lg text-muted-foreground ml-2">ETB</span>
+                </div>
+                {seatCount > 1 && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {totalPerSeat.toLocaleString()} ETB × {seatCount}{" "}
+                    {lang === "am" ? "ወንበሮች" : "seats"}
+                  </p>
+                )}
+                <div className="flex items-center justify-center gap-2 mt-3 text-sm text-muted-foreground">
+                  <span className="font-mono">{route.from_city} → {route.to_city}</span>
+                  <span>·</span>
+                  <span>{route.departure_date}</span>
+                  <span>·</span>
+                  <span className="font-mono">
+                    {lang === "am" ? "ወንበር" : "Seat"}{selectedSeats.length > 1 ? "s" : ""}{" "}
+                    {[...selectedSeats].sort((a, b) => a - b).join(", ")}
+                  </span>
+                </div>
+              </div>
+
               {effectiveAgentMode ? (
                 <div className="max-w-md mx-auto">
                   <div className="text-center mb-8">
-                    <div className="w-14 h-14 mx-auto rounded-full bg-primary/15 flex items-center justify-center mb-4">
-                      <Banknote className="w-7 h-7 text-primary" />
+                    <div className="w-16 h-16 mx-auto rounded-full bg-primary/15 flex items-center justify-center mb-4 text-3xl">
+                      💵
                     </div>
-                    <div className="font-mono text-[11px] tracking-[0.3em] text-primary mb-3">AGENT MODE · CASH PAYMENT</div>
-                    <h2 className="heading-mega text-3xl sm:text-4xl">Confirm Cash</h2>
+                    <div className="font-mono text-[11px] tracking-[0.3em] text-primary mb-2">AGENT MODE · CASH PAYMENT</div>
+                    <h2 className="font-display font-bold text-2xl sm:text-3xl">
+                      {lang === "am" ? "ጥሬ ገንዘብ ያረጋግጡ" : "Collect Cash & Confirm"}
+                    </h2>
                     <p className="text-muted-foreground text-sm mt-2">
-                      Collect <span className="text-primary font-bold">{grandTotal.toLocaleString()} ETB</span> from the customer, then confirm to issue the ticket{seatCount > 1 ? "s" : ""}.
+                      {lang === "am"
+                        ? `ከደንበኛ ${grandTotal.toLocaleString()} ብር ሰብስቡ።`
+                        : `Collect ${grandTotal.toLocaleString()} ETB from the customer.`}
                     </p>
                   </div>
                   <div className="bg-card border border-border rounded-sm p-6 space-y-3 text-sm mb-6">
