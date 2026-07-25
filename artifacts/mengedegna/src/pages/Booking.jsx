@@ -366,34 +366,36 @@ export default function Booking() {
             <div className="space-y-6">
               <TripComparison currentRoute={route} />
 
-              {/* 1a. How many passengers? */}
+              {/* 1a. Number of Passengers */}
               <div className="bg-card border border-border rounded-sm p-6">
-                <h3 className="font-display font-bold text-lg mb-1">
-                  {lang === "am" ? "ስንት ሰው ነው?" : "How many passengers?"}
-                </h3>
-                <p className="text-sm text-muted-foreground mb-5">
-                  {lang === "am"
-                    ? "ቁጥሩን ይምረጡ — ለእያንዳንዱ ወንበር ይጠናናል።"
-                    : "Pick a number — we'll reserve a seat for each person."}
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  {Array.from({ length: maxSeats }, (_, i) => i + 1).map((n) => (
-                    <button
-                      key={n}
-                      onClick={() => {
-                        setPassengerCount(n);
-                        setSelectedSeats([]);
-                      }}
-                      className={`w-14 h-14 rounded-sm font-display font-bold text-2xl border-2 transition-all ${
-                        passengerCount === n
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border hover:border-primary/40 text-foreground"
-                      }`}
-                    >
-                      {n}
-                    </button>
+                <label className="font-mono text-[10px] tracking-[0.25em] text-primary block mb-2">
+                  {lang === "am" ? "የተሳፋሪዎች ብዛት" : "NUMBER OF PASSENGERS"}
+                </label>
+                <select
+                  value={passengerCount ?? ""}
+                  onChange={(e) => {
+                    const val = e.target.value ? Number(e.target.value) : null;
+                    setPassengerCount(val);
+                    setSelectedSeats([]);
+                  }}
+                  className="w-full bg-transparent border-b border-border py-3 focus:border-primary focus:outline-none text-base font-medium appearance-none cursor-pointer"
+                >
+                  <option value="" disabled>
+                    {lang === "am" ? "ይምረጡ…" : "Select number of passengers…"}
+                  </option>
+                  {Array.from({ length: Math.min(12, maxSeats) }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>
+                      {n} {n === 1
+                        ? (lang === "am" ? "ተሳፋሪ" : "Passenger")
+                        : (lang === "am" ? "ተሳፋሪዎች" : "Passengers")}
+                    </option>
                   ))}
-                </div>
+                </select>
+                <p className="text-xs text-muted-foreground mt-2">
+                  {lang === "am"
+                    ? "ለእያንዳንዱ ተሳፋሪ አንድ መቀመጫ ይጠበቃል።"
+                    : "One seat will be reserved per passenger."}
+                </p>
               </div>
 
               {/* 1b. Passenger details + Summary card (shown once count chosen) */}
