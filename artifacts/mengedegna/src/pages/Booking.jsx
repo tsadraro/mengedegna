@@ -124,7 +124,7 @@ export default function Booking() {
   const totalPerSeat     = fare + serviceFee + internationalFee;
   const seatCount        = selectedSeats.length || 1;
   const grandTotal       = totalPerSeat * Math.max(selectedSeats.length, 1);
-  const maxSeats         = Math.min(12, route?.available_seats || 1);
+  const maxSeats         = route?.available_seats || 1;
 
   // ── Validation: all passengers have at least 2-char names ─────────────────
   const namesValid = passengerCount
