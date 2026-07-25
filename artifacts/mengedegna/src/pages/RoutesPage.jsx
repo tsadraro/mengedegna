@@ -7,7 +7,7 @@ import Footer from "@/components/Footer";
 import SearchDeck from "@/components/SearchDeck";
 import RouteCard from "@/components/RouteCard";
 import { CITIES } from "@/lib/transportData";
-import { SlidersHorizontal, Loader2 } from "lucide-react";
+import { SlidersHorizontal, Loader2, ArrowLeftRight } from "lucide-react";
 import { useLang } from "@/lib/LanguageContext";
 
 export default function RoutesPage() {
@@ -18,6 +18,9 @@ export default function RoutesPage() {
   const [loading, setLoading] = useState(true);
   const [from, setFrom] = useState(params.get("from") || "");
   const [to, setTo] = useState(params.get("to") || "");
+  const [date, setDate] = useState(params.get("date") || "");
+  const [tripType] = useState(params.get("tripType") || "oneway");
+  const [returnDate] = useState(params.get("returnDate") || "");
   const [sort, setSort] = useState("operator");
   const [klass, setKlass] = useState("all");
   const { t } = useLang();
@@ -27,13 +30,14 @@ export default function RoutesPage() {
     const query = {};
     if (from) query.from_city = from;
     if (to) query.to_city = to;
+    if (date) query.departure_date = date;
     base44.entities.Route.filter(query, "-departure_time", 50)
       .then((data) => {
         setRoutes(data || []);
         setLoading(false);
       })
       .catch(() => { setRoutes([]); setLoading(false); });
-  }, [from, to]);
+  }, [from, to, date]);
 
   const filtered = useMemo(() => {
     let list = routes;
@@ -47,6 +51,12 @@ export default function RoutesPage() {
     });
     return sorted;
   }, [routes, klass, sort]);
+
+  // Friendly label for the active search
+  const searchLabel = [
+    from && to ? `${from} → ${to}` : from ? `From ${from}` : to ? `To ${to}` : null,
+    date ? new Date(date + "T12:00:00").toLocaleDateString("en-ET", { weekday: "short", month: "short", day: "numeric" }) : null,
+  ].filter(Boolean).join(" · ");
 
   return (
     <div className="min-h-screen bg-background">
@@ -62,6 +72,27 @@ export default function RoutesPage() {
 
       <section className="py-12">
         <div className="max-w-7xl mx-auto px-6 lg:px-10">
+
+          {/* Round-trip notice */}
+          {tripType === "roundtrip" && returnDate && (
+            <div className="mb-6 flex items-center gap-3 border border-primary/30 bg-primary/5 rounded-sm px-5 py-3">
+              <ArrowLeftRight className="w-4 h-4 text-primary flex-shrink-0" />
+              <p className="text-sm text-muted-foreground">
+                <span className="text-foreground font-medium">Round trip selected.</span>{" "}
+                Pick your outbound trip below. After booking, you'll be prompted to book your return from{" "}
+                <span className="font-medium text-foreground">{to} → {from}</span> on{" "}
+                <span className="font-medium text-foreground">{returnDate}</span>.
+              </p>
+            </div>
+          )}
+
+          {/* Active search summary */}
+          {searchLabel && !loading && (
+            <p className="text-xs font-mono text-muted-foreground mb-4">
+              SHOWING RESULTS FOR · <span className="text-foreground">{searchLabel}</span>
+            </p>
+          )}
+
           {/* Controls */}
           <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
             <div className="flex items-center gap-3">
@@ -93,10 +124,23 @@ export default function RoutesPage() {
             <div className="text-center py-20 text-muted-foreground">
               <p className="font-display text-xl mb-2">{t("noRoutes")}</p>
               <p className="text-sm">{t("tryDifferent")}</p>
+              {date && (
+                <p className="text-xs mt-3 text-muted-foreground/70">
+                  Try selecting a different date — departures are available on specific days only.
+                </p>
+              )}
             </div>
           ) : (
             <div className="grid md:grid-cols-2 gap-6">
-              {filtered.map((r) => <RouteCard key={r.id} route={r} />)}
+              {filtered.map((r) => (
+                <RouteCard
+                  key={r.id}
+                  route={r}
+                  returnDate={tripType === "roundtrip" ? returnDate : null}
+                  returnFrom={tripType === "roundtrip" ? to : null}
+                  returnTo={tripType === "roundtrip" ? from : null}
+                />
+              ))}
             </div>
           )}
         </div>

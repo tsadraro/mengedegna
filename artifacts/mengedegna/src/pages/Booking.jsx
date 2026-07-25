@@ -25,10 +25,25 @@ export default function Booking() {
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState(1);
 
-  // Passenger info
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
+  // Passenger info — one entry per selected seat; index 0 is the lead/payer
+  const [passengers, setPassengers] = useState([{ name: "", phone: "" }]);
   const [selectedSeats, setSelectedSeats] = useState([]);
+
+  // Convenience aliases so the rest of the code stays readable
+  const name  = passengers[0]?.name  ?? "";
+  const phone = passengers[0]?.phone ?? "";
+
+  // Keep passengers array in sync with selected seat count
+  useEffect(() => {
+    const count = Math.max(selectedSeats.length, 1);
+    setPassengers((prev) => {
+      if (prev.length === count) return prev;
+      if (prev.length < count) {
+        return [...prev, ...Array.from({ length: count - prev.length }, () => ({ name: "", phone: "" }))];
+      }
+      return prev.slice(0, count);
+    });
+  }, [selectedSeats.length]);
 
   // Seat hold
   const [heldBookingIds, setHeldBookingIds] = useState([]);
@@ -98,10 +113,10 @@ export default function Booking() {
     setHoldLoading(true);
     const seats = [...selectedSeats].sort((a, b) => a - b).map(String);
     const expiresAt = new Date(Date.now() + 12 * 60 * 1000).toISOString();
-    const holdRecords = seats.map((seat) => ({
+    const holdRecords = seats.map((seat, i) => ({
       route_id: route.id,
-      passenger_name: name,
-      phone,
+      passenger_name: passengers[i]?.name || name,
+      phone: passengers[0]?.phone || phone,
       seat_number: seat,
       from_city: route.from_city,
       to_city: route.to_city,
@@ -194,8 +209,8 @@ export default function Booking() {
         // Fallback: create confirmed bookings directly
         const records = seats.map((seat, i) => ({
           route_id: route.id,
-          passenger_name: name,
-          phone,
+          passenger_name: passengers[i]?.name || name,
+          phone: passengers[0]?.phone || phone,
           seat_number: seat,
           from_city: route.from_city,
           to_city: route.to_city,
@@ -346,20 +361,23 @@ export default function Booking() {
                     </div>
                   </div>
                   <div className="space-y-6">
-                    <div>
-                      <label className="font-mono text-[10px] tracking-[0.25em] text-primary block mb-2">FULL NAME</label>
-                      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="As on your ID"
-                        className="w-full bg-transparent border-b border-border py-3 focus:border-primary focus:outline-none" />
-                    </div>
+                    {/* Lead passenger phone — always shown first */}
                     <div>
                       <label className="font-mono text-[10px] tracking-[0.25em] text-primary block mb-2">
                         {effectiveAgentMode ? "CUSTOMER PHONE NUMBER" : "TELEBIRR PHONE NUMBER"}
                       </label>
                       <div className="flex items-center border-b border-border focus-within:border-primary">
                         <span className="text-muted-foreground font-mono py-3">+251</span>
-                        <input value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                          placeholder="9XX XXX XXX" inputMode="numeric"
-                          className="w-full bg-transparent py-3 px-2 focus:outline-none font-mono" />
+                        <input
+                          value={phone}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                            setPassengers((prev) => prev.map((p, i) => i === 0 ? { ...p, phone: val } : p));
+                          }}
+                          placeholder="9XX XXX XXX"
+                          inputMode="numeric"
+                          className="w-full bg-transparent py-3 px-2 focus:outline-none font-mono"
+                        />
                       </div>
                       <p className="text-xs text-muted-foreground mt-2">
                         {effectiveAgentMode
@@ -367,6 +385,39 @@ export default function Booking() {
                           : "Payment push notification will be sent to this Telebirr-linked number."}
                       </p>
                     </div>
+
+                    {/* Passenger names — one per selected seat */}
+                    {selectedSeats.length === 0 ? (
+                      <div>
+                        <label className="font-mono text-[10px] tracking-[0.25em] text-primary block mb-2">FULL NAME</label>
+                        <input
+                          value={name}
+                          onChange={(e) => setPassengers((prev) => prev.map((p, i) => i === 0 ? { ...p, name: e.target.value } : p))}
+                          placeholder="As on your ID"
+                          className="w-full bg-transparent border-b border-border py-3 focus:border-primary focus:outline-none"
+                        />
+                        <p className="text-xs text-muted-foreground mt-2">Select your seat(s) below — a name field will appear for each passenger.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="font-mono text-[10px] tracking-[0.25em] text-primary">
+                          PASSENGER NAMES · {selectedSeats.length} {selectedSeats.length === 1 ? "SEAT" : "SEATS"}
+                        </div>
+                        {[...selectedSeats].sort((a, b) => a - b).map((seat, i) => (
+                          <div key={seat}>
+                            <label className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground block mb-2">
+                              SEAT {seat}{i === 0 ? " · LEAD PASSENGER" : ` · PASSENGER ${i + 1}`}
+                            </label>
+                            <input
+                              value={passengers[i]?.name || ""}
+                              onChange={(e) => setPassengers((prev) => prev.map((p, idx) => idx === i ? { ...p, name: e.target.value } : p))}
+                              placeholder="Full name as on ID"
+                              className="w-full bg-transparent border-b border-border py-3 focus:border-primary focus:outline-none"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {selectedSeats.length === 0 && (
                       <div className="flex items-start gap-2 border border-border bg-secondary/40 rounded-sm px-4 py-3">
                         <Users className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
@@ -388,7 +439,12 @@ export default function Booking() {
                     )}
                   </div>
                   <button
-                    disabled={name.trim().length < 2 || phone.length < 9 || selectedSeats.length === 0 || holdLoading}
+                    disabled={
+                      passengers.some((p, i) => i < selectedSeats.length && p.name.trim().length < 2) ||
+                      phone.length < 9 ||
+                      selectedSeats.length === 0 ||
+                      holdLoading
+                    }
                     onClick={handleHoldSeats}
                     className="mt-8 w-full bg-primary text-primary-foreground font-semibold py-3.5 rounded-sm hover:brightness-110 transition-all disabled:opacity-40 flex items-center justify-center gap-2"
                   >
@@ -396,7 +452,7 @@ export default function Booking() {
                       ? <><Loader2 className="w-4 h-4 animate-spin" /> Reserving seats…</>
                       : <>Select Delivery Method <ArrowRight className="w-4 h-4" /></>}
                   </button>
-                  {selectedSeats.length === 0 && name.trim().length >= 2 && phone.length >= 9 && (
+                  {selectedSeats.length === 0 && phone.length >= 9 && (
                     <p className="text-center text-xs text-destructive mt-3">Please select at least one seat to continue.</p>
                   )}
                 </div>
