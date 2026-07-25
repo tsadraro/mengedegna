@@ -8,7 +8,7 @@ import EInvoice from "@/components/EInvoice";
 import {
   ArrowRight, ArrowLeft, Check, ShieldAlert, Loader2, Bus, MapPin,
   UserCheck, Banknote, Bell, Clock, PartyPopper, Armchair, Users,
-  Globe, Ticket, MessageSquare, AlertTriangle, Smartphone,
+  Globe, Ticket, MessageSquare, AlertTriangle, Smartphone, Pencil,
 } from "lucide-react";
 import { useLang } from "@/lib/LanguageContext";
 import { getRefundPolicyForBooking } from "@/lib/refundPolicy";
@@ -16,7 +16,7 @@ import { SEATING_RULE } from "@/lib/operatorProfiles";
 import SeatMap from "@/components/SeatMap";
 import TripComparison from "@/components/TripComparison";
 
-// Steps: 1=Details+Seats | 2=Delivery Method | 3=Payment | 4=Ticket
+// Steps: 1=Details+Seats+Delivery | 2=Payment | 3=Ticket
 export default function Booking() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -27,25 +27,42 @@ export default function Booking() {
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState(1);
 
-  // Passenger info — one entry per selected seat; index 0 is the lead/payer
-  const [passengers, setPassengers] = useState([{ name: "", phone: "" }]);
+  // ── Passenger count chosen upfront ────────────────────────────────────────
+  const [passengerCount, setPassengerCount] = useState(null);
+
+  // Passenger info — firstName + lastName + phone per person; index 0 is lead/payer
+  const [passengers, setPassengers] = useState([{ firstName: "", lastName: "", phone: "" }]);
   const [selectedSeats, setSelectedSeats] = useState([]);
 
-  // Convenience aliases so the rest of the code stays readable
-  const name  = passengers[0]?.name  ?? "";
-  const phone = passengers[0]?.phone ?? "";
+  // Convenience aliases for lead passenger
+  const firstName = passengers[0]?.firstName ?? "";
+  const lastName  = passengers[0]?.lastName  ?? "";
+  const phone     = passengers[0]?.phone     ?? "";
+  const leadName  = `${firstName} ${lastName}`.trim();
 
-  // Keep passengers array in sync with selected seat count
+  // Helper: full name string for a passenger index
+  const passengerName = (i) =>
+    `${passengers[i]?.firstName?.trim() || ""} ${passengers[i]?.lastName?.trim() || ""}`.trim();
+
+  // Once all seats are picked (count matches), the seat map collapses
+  const seatsConfirmed = !!(passengerCount && selectedSeats.length === passengerCount);
+
+  // Keep passengers array in sync with passengerCount
   useEffect(() => {
-    const count = Math.max(selectedSeats.length, 1);
+    if (!passengerCount) return;
     setPassengers((prev) => {
-      if (prev.length === count) return prev;
-      if (prev.length < count) {
-        return [...prev, ...Array.from({ length: count - prev.length }, () => ({ name: "", phone: "" }))];
+      if (prev.length === passengerCount) return prev;
+      if (prev.length < passengerCount) {
+        return [
+          ...prev,
+          ...Array.from({ length: passengerCount - prev.length }, () => ({
+            firstName: "", lastName: "", phone: "",
+          })),
+        ];
       }
-      return prev.slice(0, count);
+      return prev.slice(0, passengerCount);
     });
-  }, [selectedSeats.length]);
+  }, [passengerCount]);
 
   // Seat hold
   const [heldBookingIds, setHeldBookingIds] = useState([]);
@@ -53,7 +70,7 @@ export default function Booking() {
   const [holdError, setHoldError] = useState(null);
   const [holdLoading, setHoldLoading] = useState(false);
 
-  // Delivery method — default to digital boarding pass (most user-friendly)
+  // Delivery method — default to digital boarding pass
   const [deliveryMethod, setDeliveryMethod] = useState("boarding-pass");
 
   // Post-payment
@@ -86,7 +103,7 @@ export default function Booking() {
   }, []);
 
   const isOperator = currentUser?.role === "operator";
-  const isAdmin = currentUser?.role === "admin";
+  const isAdmin    = currentUser?.role === "admin";
   const effectiveAgentMode = isOperator ? true : agentMode;
 
   useEffect(() => {
@@ -101,15 +118,20 @@ export default function Booking() {
       .catch(() => setLoading(false));
   }, [routeId, isOperator, currentUser]);
 
-  const fare = route?.fare || 0;
-  const serviceFee = isAbroad ? 0 : 20;
+  const fare             = route?.fare || 0;
+  const serviceFee       = isAbroad ? 0 : 20;
   const internationalFee = isAbroad ? Math.round(usdToEtb) : 0;
-  const totalPerSeat = fare + serviceFee + internationalFee;
-  const seatCount = selectedSeats.length || 1;
-  const grandTotal = totalPerSeat * Math.max(selectedSeats.length, 1);
-  const maxSeats = Math.min(6, route?.available_seats || 1);
+  const totalPerSeat     = fare + serviceFee + internationalFee;
+  const seatCount        = selectedSeats.length || 1;
+  const grandTotal       = totalPerSeat * Math.max(selectedSeats.length, 1);
+  const maxSeats         = Math.min(6, route?.available_seats || 1);
 
-  // ── Step 1 → 2: Hold the selected seats ──────────────────────────────────
+  // ── Validation: all passengers have at least 2-char names ─────────────────
+  const namesValid = passengerCount
+    ? Array.from({ length: passengerCount }, (_, i) => passengerName(i)).every((n) => n.length >= 2)
+    : false;
+
+  // ── Step 1 → 2: Hold the selected seats ───────────────────────────────────
   const handleHoldSeats = async () => {
     setHoldError(null);
     setHoldLoading(true);
@@ -117,7 +139,7 @@ export default function Booking() {
     const expiresAt = new Date(Date.now() + 12 * 60 * 1000).toISOString();
     const holdRecords = seats.map((seat, i) => ({
       route_id: route.id,
-      passenger_name: passengers[i]?.name || name,
+      passenger_name: passengerName(i) || leadName,
       phone: passengers[0]?.phone || phone,
       seat_number: seat,
       from_city: route.from_city,
@@ -135,7 +157,7 @@ export default function Booking() {
       const ids = (Array.isArray(created) ? created : holdRecords).map((b) => b.id).filter(Boolean);
       setHeldBookingIds(ids);
       setHoldExpiresAt(expiresAt);
-      setStep(2);
+      setStep(2); // go directly to payment
     } catch {
       setHoldError("Could not reserve seats. Please try again.");
     } finally {
@@ -143,7 +165,7 @@ export default function Booking() {
     }
   };
 
-  // ── Step 2 → 1: Release holds and go back ────────────────────────────────
+  // ── Step 2 → 1: Release holds and go back ─────────────────────────────────
   const handleReleaseHolds = async () => {
     for (const id of heldBookingIds) {
       try { await base44.entities.Booking.delete(id); } catch {}
@@ -151,11 +173,11 @@ export default function Booking() {
     setHeldBookingIds([]);
     setHoldExpiresAt(null);
     setSelectedSeats([]);
-    setDeliveryMethod(null);
+    setDeliveryMethod("boarding-pass");
     setStep(1);
   };
 
-  // ── Payment confirmed: atomically update held bookings → confirmed ────────
+  // ── Payment confirmed: atomically update held bookings → confirmed ─────────
   const handlePaid = async (paymentMethod = "telebirr") => {
     setCreating(true);
     setHoldError(null);
@@ -176,7 +198,7 @@ export default function Booking() {
 
     try {
       if (heldBookingIds.length > 0) {
-        // ── Atomic path: one server transaction, no race conditions ──
+        // ── Atomic path ──────────────────────────────────────────────────────
         const token = localStorage.getItem("base44_access_token");
         const resp = await fetch("/api/apps/mengedegna/atomic/confirm", {
           method: "POST",
@@ -213,10 +235,10 @@ export default function Booking() {
 
         setBookings(Array.isArray(data) ? data : [data]);
       } else {
-        // ── Fallback: no hold IDs — create confirmed bookings directly ──
+        // ── Fallback: create confirmed bookings directly ─────────────────────
         const records = seats.map((seat, i) => ({
           route_id: route.id,
-          passenger_name: passengers[i]?.name || name,
+          passenger_name: passengerName(i) || leadName,
           phone: passengers[0]?.phone || phone,
           seat_number: seat,
           from_city: route.from_city,
@@ -235,14 +257,13 @@ export default function Booking() {
           delivery_method: deliveryMethod,
         }));
         const created = await base44.entities.Booking.bulkCreate(records);
-        // Decrement seats (non-atomic fallback)
         await base44.entities.Route.update(route.id, {
           available_seats: Math.max(0, route.available_seats - seats.length),
         });
         setBookings(Array.isArray(created) ? created : records);
       }
 
-      setStep(4);
+      setStep(3); // ticket
       setShowConfirmAlert(true);
       setTimeout(() => setShowConfirmAlert(false), 6000);
     } catch (err) {
@@ -251,6 +272,8 @@ export default function Booking() {
       setCreating(false);
     }
   };
+
+  // ────────────────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -302,7 +325,7 @@ export default function Booking() {
           </div>
 
           {/* Progress */}
-          <Stepper step={step} agentMode={effectiveAgentMode} />
+          <Stepper step={step} />
 
           {/* Hold error banner */}
           {holdError && (
@@ -338,216 +361,308 @@ export default function Booking() {
             </div>
           </div>
 
-          {/* ── STEP 1: Details + Seat Selection ── */}
+          {/* ── STEP 1: Passenger count → Details → Seat Map → Delivery ── */}
           {step === 1 && (
             <div className="space-y-6">
-              {step === 1 && <TripComparison currentRoute={route} />}
-              <div className="grid lg:grid-cols-[1fr_280px] gap-8">
-                <div className="bg-card border border-border rounded-sm p-8">
-                  <h3 className="font-display font-bold text-xl mb-2">Passenger Details</h3>
-                  <div className="space-y-6">
-                    {/* Lead passenger phone — always shown first */}
-                    <div>
-                      <label className="font-mono text-[10px] tracking-[0.25em] text-primary block mb-2">
-                        {effectiveAgentMode ? "CUSTOMER PHONE NUMBER" : "TELEBIRR PHONE NUMBER"}
-                      </label>
-                      <div className="flex items-center border-b border-border focus-within:border-primary">
-                        <span className="text-muted-foreground font-mono py-3">+251</span>
-                        <input
-                          value={phone}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/\D/g, "").slice(0, 10);
-                            setPassengers((prev) => prev.map((p, i) => i === 0 ? { ...p, phone: val } : p));
-                          }}
-                          placeholder="9XX XXX XXX"
-                          inputMode="numeric"
-                          className="w-full bg-transparent py-3 px-2 focus:outline-none font-mono"
-                        />
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-2">
-                        {effectiveAgentMode
-                          ? "Customer's phone number for the ticket record."
-                          : "Payment push notification will be sent to this Telebirr-linked number."}
-                      </p>
-                    </div>
+              <TripComparison currentRoute={route} />
 
-                    {/* Passenger names — one per selected seat */}
-                    {selectedSeats.length === 0 ? (
-                      <div>
-                        <label className="font-mono text-[10px] tracking-[0.25em] text-primary block mb-2">FULL NAME</label>
-                        <input
-                          value={name}
-                          onChange={(e) => setPassengers((prev) => prev.map((p, i) => i === 0 ? { ...p, name: e.target.value } : p))}
-                          placeholder="As on your ID"
-                          className="w-full bg-transparent border-b border-border py-3 focus:border-primary focus:outline-none"
-                        />
-                        <p className="text-xs text-muted-foreground mt-2">Select your seat(s) below — a name field will appear for each passenger.</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        <div className="font-mono text-[10px] tracking-[0.25em] text-primary">
-                          PASSENGER NAMES · {selectedSeats.length} {selectedSeats.length === 1 ? "SEAT" : "SEATS"}
-                        </div>
-                        {[...selectedSeats].sort((a, b) => a - b).map((seat, i) => (
-                          <div key={seat}>
-                            <label className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground block mb-2">
-                              SEAT {seat}{i === 0 ? " · LEAD PASSENGER" : ` · PASSENGER ${i + 1}`}
-                            </label>
+              {/* 1a. How many passengers? */}
+              <div className="bg-card border border-border rounded-sm p-6">
+                <h3 className="font-display font-bold text-lg mb-1">
+                  {lang === "am" ? "ስንት ሰው ነው?" : "How many passengers?"}
+                </h3>
+                <p className="text-sm text-muted-foreground mb-5">
+                  {lang === "am"
+                    ? "ቁጥሩን ይምረጡ — ለእያንዳንዱ ወንበር ይጠናናል።"
+                    : "Pick a number — we'll reserve a seat for each person."}
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  {Array.from({ length: maxSeats }, (_, i) => i + 1).map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => {
+                        setPassengerCount(n);
+                        setSelectedSeats([]);
+                      }}
+                      className={`w-14 h-14 rounded-sm font-display font-bold text-2xl border-2 transition-all ${
+                        passengerCount === n
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border hover:border-primary/40 text-foreground"
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 1b. Passenger details + Summary card (shown once count chosen) */}
+              {passengerCount && (
+                <>
+                  <div className="grid lg:grid-cols-[1fr_280px] gap-8">
+                    <div className="bg-card border border-border rounded-sm p-8">
+                      <h3 className="font-display font-bold text-xl mb-2">Passenger Details</h3>
+                      <div className="space-y-6">
+                        {/* Lead passenger phone */}
+                        <div>
+                          <label className="font-mono text-[10px] tracking-[0.25em] text-primary block mb-2">
+                            {effectiveAgentMode ? "CUSTOMER PHONE NUMBER" : "TELEBIRR PHONE NUMBER"}
+                          </label>
+                          <div className="flex items-center border-b border-border focus-within:border-primary">
+                            <span className="text-muted-foreground font-mono py-3">+251</span>
                             <input
-                              value={passengers[i]?.name || ""}
-                              onChange={(e) => setPassengers((prev) => prev.map((p, idx) => idx === i ? { ...p, name: e.target.value } : p))}
-                              placeholder="Full name as on ID"
-                              className="w-full bg-transparent border-b border-border py-3 focus:border-primary focus:outline-none"
+                              value={phone}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                                setPassengers((prev) => prev.map((p, i) => i === 0 ? { ...p, phone: val } : p));
+                              }}
+                              placeholder="9XX XXX XXX"
+                              inputMode="numeric"
+                              className="w-full bg-transparent py-3 px-2 focus:outline-none font-mono"
                             />
                           </div>
-                        ))}
-                      </div>
-                    )}
-                    {selectedSeats.length === 0 && (
-                      <div className="flex items-start gap-2 border border-border bg-secondary/40 rounded-sm px-4 py-3">
-                        <Users className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
-                        <span className="text-xs text-muted-foreground">
-                          Select a seat on the map below before continuing. Travelling as a group? Pick up to {maxSeats} adjacent seats.
-                        </span>
-                      </div>
-                    )}
-                    {geoChecked && isAbroad && (
-                      <div className="flex items-start gap-2 border border-accent/40 bg-accent/5 rounded-sm px-4 py-3">
-                        <Globe className="w-4 h-4 text-accent flex-shrink-0 mt-0.5" />
-                        <div>
-                          <div className="font-mono text-[9px] tracking-[0.2em] text-accent font-bold mb-0.5">INTERNATIONAL BOOKING DETECTED</div>
-                          <span className="text-xs text-muted-foreground">
-                            A <span className="text-accent font-semibold">$1 international remittance fee</span> applies per seat.
-                          </span>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            {effectiveAgentMode
+                              ? "Customer's phone number for the ticket record."
+                              : "Payment push notification will be sent to this Telebirr-linked number."}
+                          </p>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    disabled={
-                      passengers.some((p, i) => i < selectedSeats.length && p.name.trim().length < 2) ||
-                      phone.length < 9 ||
-                      selectedSeats.length === 0 ||
-                      holdLoading
-                    }
-                    onClick={handleHoldSeats}
-                    className="mt-8 w-full bg-primary text-primary-foreground font-semibold py-3.5 rounded-sm hover:brightness-110 transition-all disabled:opacity-40 flex items-center justify-center gap-2"
-                  >
-                    {holdLoading
-                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Reserving seats…</>
-                      : <>Select Delivery Method <ArrowRight className="w-4 h-4" /></>}
-                  </button>
-                  {selectedSeats.length === 0 && phone.length >= 9 && (
-                    <p className="text-center text-xs text-destructive mt-3">Please select at least one seat to continue.</p>
-                  )}
-                </div>
-                <SummaryCard
-                  route={route} totalPerSeat={totalPerSeat} serviceFee={serviceFee}
-                  internationalFee={internationalFee} isAbroad={isAbroad}
-                  seatCount={selectedSeats.length} grandTotal={selectedSeats.length > 0 ? totalPerSeat * selectedSeats.length : totalPerSeat}
-                />
-              </div>
-              <SeatMap route={route} selectedSeats={selectedSeats} onSelect={setSelectedSeats} maxSeats={maxSeats} />
-            </div>
-          )}
 
-          {/* ── STEP 2: Delivery Method ── */}
-          {step === 2 && (
-            <div className="max-w-lg mx-auto">
-              <div className="text-center mb-8">
-                <div className="text-4xl mb-3">🎟️</div>
-                <h2 className="font-display font-bold text-2xl sm:text-3xl">
-                  {lang === "am" ? "ቲኬቱን እንዴት ይቀበላሉ?" : "How would you like your ticket?"}
-                </h2>
-                <p className="text-muted-foreground text-sm mt-2">
-                  {lang === "am"
-                    ? "ክፍያ ከተከፈለ በኋላ ቲኬት እንዴት እንደሚደርስዎ ይምረጡ።"
-                    : "Choose how to receive your ticket after payment."}
-                </p>
-              </div>
-
-              {holdExpiresAt && <HoldCountdown expiresAt={holdExpiresAt} seats={selectedSeats} />}
-
-              <div className="space-y-3 mt-6">
-                {[
-                  {
-                    value: "boarding-pass",
-                    icon: <Ticket className="w-7 h-7" />,
-                    emoji: "📱",
-                    title: lang === "am" ? "ዲጂታል ቲኬት" : "Digital Ticket",
-                    desc: lang === "am"
-                      ? "ቲኬቱን በስልክ ላይ ያዩ። ሲሳፈሩ ያሳዩ።"
-                      : "View your ticket on your phone. Show it when boarding.",
-                    recommended: true,
-                  },
-                  {
-                    value: "sms",
-                    icon: <Smartphone className="w-7 h-7" />,
-                    emoji: "💬",
-                    title: lang === "am" ? "ኤስኤምኤስ ወደ ስልኬ" : "SMS to my phone",
-                    desc: lang === "am"
-                      ? `ምዝገባ ዝርዝር ወደ +251 ${phone} እንልካለን።`
-                      : `Booking details sent to +251 ${phone}.`,
-                    recommended: false,
-                  },
-                ].map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setDeliveryMethod(opt.value)}
-                    className={`w-full text-left border-2 rounded-sm p-5 transition-all relative ${
-                      deliveryMethod === opt.value
-                        ? "border-primary bg-primary/5"
-                        : "border-border hover:border-primary/40 hover:bg-secondary/40"
-                    }`}
-                  >
-                    {opt.recommended && (
-                      <span className="absolute top-3 right-3 text-[10px] font-mono font-bold bg-primary/20 text-primary px-2 py-0.5 rounded-sm">
-                        {lang === "am" ? "ተወዳጅ" : "RECOMMENDED"}
-                      </span>
-                    )}
-                    <div className="flex items-center gap-4">
-                      <div className={`w-14 h-14 rounded-sm flex items-center justify-center flex-shrink-0 text-2xl ${
-                        deliveryMethod === opt.value ? "bg-primary/15" : "bg-secondary"
-                      }`}>
-                        {opt.emoji}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-display font-bold text-base">{opt.title}</span>
-                          {deliveryMethod === opt.value && (
-                            <span className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                              <Check className="w-3 h-3 text-primary-foreground" />
-                            </span>
-                          )}
+                        {/* Per-passenger first + last name */}
+                        <div className="space-y-5">
+                          <div className="font-mono text-[10px] tracking-[0.25em] text-primary">
+                            PASSENGER NAMES · {passengerCount} {passengerCount === 1 ? "PERSON" : "PEOPLE"}
+                          </div>
+                          {Array.from({ length: passengerCount }, (_, i) => {
+                            const sortedSeats = [...selectedSeats].sort((a, b) => a - b);
+                            return (
+                              <div key={i}>
+                                <div className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground mb-2.5">
+                                  {i === 0 ? "LEAD PASSENGER" : `PASSENGER ${i + 1}`}
+                                  {sortedSeats[i] !== undefined && (
+                                    <span className="ml-2 text-primary">· SEAT {sortedSeats[i]}</span>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] text-muted-foreground block mb-1">FIRST NAME</label>
+                                    <input
+                                      value={passengers[i]?.firstName || ""}
+                                      onChange={(e) =>
+                                        setPassengers((prev) =>
+                                          prev.map((p, idx) => idx === i ? { ...p, firstName: e.target.value } : p)
+                                        )
+                                      }
+                                      placeholder={lang === "am" ? "ስም" : "Abebe"}
+                                      className="w-full bg-transparent border-b border-border py-2.5 focus:border-primary focus:outline-none text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-muted-foreground block mb-1">LAST NAME</label>
+                                    <input
+                                      value={passengers[i]?.lastName || ""}
+                                      onChange={(e) =>
+                                        setPassengers((prev) =>
+                                          prev.map((p, idx) => idx === i ? { ...p, lastName: e.target.value } : p)
+                                        )
+                                      }
+                                      placeholder={lang === "am" ? "የቤተሰብ ስም" : "Kebede"}
+                                      className="w-full bg-transparent border-b border-border py-2.5 focus:border-primary focus:outline-none text-sm"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                        <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{opt.desc}</p>
+
+                        {geoChecked && isAbroad && (
+                          <div className="flex items-start gap-2 border border-accent/40 bg-accent/5 rounded-sm px-4 py-3">
+                            <Globe className="w-4 h-4 text-accent flex-shrink-0 mt-0.5" />
+                            <div>
+                              <div className="font-mono text-[9px] tracking-[0.2em] text-accent font-bold mb-0.5">INTERNATIONAL BOOKING DETECTED</div>
+                              <span className="text-xs text-muted-foreground">
+                                A <span className="text-accent font-semibold">$1 international remittance fee</span> applies per seat.
+                              </span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </button>
-                ))}
-              </div>
+                    <SummaryCard
+                      route={route}
+                      totalPerSeat={totalPerSeat}
+                      serviceFee={serviceFee}
+                      internationalFee={internationalFee}
+                      isAbroad={isAbroad}
+                      seatCount={selectedSeats.length || passengerCount}
+                      grandTotal={(selectedSeats.length || passengerCount) * totalPerSeat}
+                    />
+                  </div>
 
-              <button
-                onClick={() => setStep(3)}
-                className="mt-6 w-full bg-primary text-primary-foreground font-bold py-4 rounded-sm hover:brightness-110 transition-all flex items-center justify-center gap-2 text-base"
-              >
-                {lang === "am" ? "ወደ ክፍያ ይቀጥሉ" : "Continue to Payment"} <ArrowRight className="w-5 h-5" />
-              </button>
-              <div className="text-center mt-4">
-                <button onClick={handleReleaseHolds} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
-                  <ArrowLeft className="w-4 h-4" />
-                  {lang === "am" ? "ተመለስ — ወንበር ይቀይሩ" : "Back — change seats"}
-                </button>
-              </div>
+                  {/* 1c. Seat Map — shrinks once all seats selected */}
+
+                  {/* Collapsed summary row (shown when seatsConfirmed) */}
+                  {seatsConfirmed && (
+                    <div className="bg-card border border-primary/30 rounded-sm px-5 py-4 flex items-center justify-between animate-slide-up">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-sm bg-primary/10 flex items-center justify-center">
+                          <Armchair className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <div className="font-mono text-[10px] tracking-[0.2em] text-primary font-bold mb-1">
+                            {passengerCount === 1 ? "SEAT SELECTED" : "SEATS SELECTED"}
+                          </div>
+                          <div className="flex gap-2 flex-wrap">
+                            {[...selectedSeats].sort((a, b) => a - b).map((s) => (
+                              <span
+                                key={s}
+                                className="font-mono font-bold text-sm bg-primary/10 text-primary px-2.5 py-0.5 rounded-sm"
+                              >
+                                {s}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setSelectedSeats([])}
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary border border-border hover:border-primary/40 px-3 py-2 rounded-sm transition-all"
+                      >
+                        <Pencil className="w-3 h-3" /> Change
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Full seat map — collapses smoothly on confirmation */}
+                  <div
+                    style={{
+                      maxHeight: seatsConfirmed ? 0 : "2000px",
+                      overflow: "hidden",
+                      transition: "max-height 0.45s ease-in-out",
+                    }}
+                  >
+                    <SeatMap
+                      route={route}
+                      selectedSeats={selectedSeats}
+                      onSelect={setSelectedSeats}
+                      maxSeats={passengerCount}
+                    />
+                    {!seatsConfirmed && (
+                      <p className="text-center text-xs text-muted-foreground mt-3">
+                        {lang === "am"
+                          ? `${passengerCount} ወንበር ይምረጡ`
+                          : `Pick ${passengerCount} seat${passengerCount > 1 ? "s" : ""} to continue`}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 1d. Delivery method — slides in after seats are confirmed */}
+                  <div
+                    style={{
+                      maxHeight: seatsConfirmed ? "600px" : 0,
+                      overflow: "hidden",
+                      transition: "max-height 0.45s ease-in-out",
+                    }}
+                  >
+                    <div className="space-y-4 pt-2">
+                      <div>
+                        <h3 className="font-display font-bold text-lg mb-1">
+                          {lang === "am" ? "ቲኬቱን እንዴት ይቀበላሉ?" : "How would you like your ticket?"}
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                          {lang === "am"
+                            ? "ክፍያ ከተከፈለ በኋላ ቲኬቱ እንዴት እንደሚደርስዎ ይምረጡ።"
+                            : "Choose how to receive your ticket after payment."}
+                        </p>
+                      </div>
+                      <div className="space-y-3">
+                        {[
+                          {
+                            value: "boarding-pass",
+                            emoji: "📱",
+                            title: lang === "am" ? "ዲጂታል ቲኬት" : "Digital Ticket",
+                            desc: lang === "am"
+                              ? "ቲኬቱን በስልክ ላይ ያዩ። ሲሳፈሩ ያሳዩ።"
+                              : "View your ticket on your phone. Show it when boarding.",
+                            recommended: true,
+                          },
+                          {
+                            value: "sms",
+                            emoji: "💬",
+                            title: lang === "am" ? "ኤስኤምኤስ ወደ ስልኬ" : "SMS to my phone",
+                            desc: lang === "am"
+                              ? `ምዝገባ ዝርዝር ወደ +251 ${phone} እንልካለን።`
+                              : `Booking details sent to +251 ${phone}.`,
+                            recommended: false,
+                          },
+                        ].map((opt) => (
+                          <button
+                            key={opt.value}
+                            onClick={() => setDeliveryMethod(opt.value)}
+                            className={`w-full text-left border-2 rounded-sm p-4 transition-all relative ${
+                              deliveryMethod === opt.value
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:border-primary/40 hover:bg-secondary/40"
+                            }`}
+                          >
+                            {opt.recommended && (
+                              <span className="absolute top-3 right-3 text-[10px] font-mono font-bold bg-primary/20 text-primary px-2 py-0.5 rounded-sm">
+                                {lang === "am" ? "ተወዳጅ" : "RECOMMENDED"}
+                              </span>
+                            )}
+                            <div className="flex items-center gap-4">
+                              <div className={`w-12 h-12 rounded-sm flex items-center justify-center flex-shrink-0 text-xl ${
+                                deliveryMethod === opt.value ? "bg-primary/15" : "bg-secondary"
+                              }`}>
+                                {opt.emoji}
+                              </div>
+                              <div className="flex-1 min-w-0 pr-16">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-display font-bold text-base">{opt.title}</span>
+                                  {deliveryMethod === opt.value && (
+                                    <span className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                                      <Check className="w-3 h-3 text-primary-foreground" />
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed">{opt.desc}</p>
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Reserve button */}
+                      <button
+                        disabled={!namesValid || phone.length < 9 || holdLoading}
+                        onClick={handleHoldSeats}
+                        className="mt-2 w-full bg-primary text-primary-foreground font-semibold py-4 rounded-sm hover:brightness-110 transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+                      >
+                        {holdLoading ? (
+                          <><Loader2 className="w-4 h-4 animate-spin" /> Reserving seats…</>
+                        ) : (
+                          <>Reserve {passengerCount > 1 ? `${passengerCount} Seats` : "Seat"} & Continue to Payment <ArrowRight className="w-4 h-4" /></>
+                        )}
+                      </button>
+                      {!namesValid && phone.length >= 9 && (
+                        <p className="text-center text-xs text-destructive">
+                          Please fill in every passenger's first and last name to continue.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
-          {/* ── STEP 3: Payment ── */}
-          {step === 3 && (
+          {/* ── STEP 2: Payment ── */}
+          {step === 2 && (
             <div>
               {holdExpiresAt && <HoldCountdown expiresAt={holdExpiresAt} seats={selectedSeats} className="mb-6" />}
 
-              {/* Big total display — visible to all */}
+              {/* Big total display */}
               <div className="bg-card border-2 border-primary/30 rounded-sm p-6 mb-6 text-center">
                 <p className="text-sm text-muted-foreground mb-1">
                   {lang === "am" ? "ጠቅላላ ክፍያ" : "Total to Pay"}
@@ -577,9 +692,7 @@ export default function Booking() {
               {effectiveAgentMode ? (
                 <div className="max-w-md mx-auto">
                   <div className="text-center mb-8">
-                    <div className="w-16 h-16 mx-auto rounded-full bg-primary/15 flex items-center justify-center mb-4 text-3xl">
-                      💵
-                    </div>
+                    <div className="w-16 h-16 mx-auto rounded-full bg-primary/15 flex items-center justify-center mb-4 text-3xl">💵</div>
                     <div className="font-mono text-[11px] tracking-[0.3em] text-primary mb-2">AGENT MODE · CASH PAYMENT</div>
                     <h2 className="font-display font-bold text-2xl sm:text-3xl">
                       {lang === "am" ? "ጥሬ ገንዘብ ያረጋግጡ" : "Collect Cash & Confirm"}
@@ -591,7 +704,7 @@ export default function Booking() {
                     </p>
                   </div>
                   <div className="bg-card border border-border rounded-sm p-6 space-y-3 text-sm mb-6">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Passenger</span><span className="font-medium">{name}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Passenger</span><span className="font-medium">{leadName}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Phone</span><span className="font-mono">+251 {phone}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Seats</span><span className="font-mono font-bold text-primary">{[...selectedSeats].sort((a, b) => a - b).join(", ")}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Route</span><span>{route.from_city} → {route.to_city}</span></div>
@@ -607,7 +720,7 @@ export default function Booking() {
                     {creating ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Check className="w-5 h-5" /> Cash Received — Issue {seatCount > 1 ? `${seatCount} Tickets` : "Ticket"}</>}
                   </button>
                   <div className="text-center mt-4">
-                    <button onClick={() => setStep(2)} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
+                    <button onClick={handleReleaseHolds} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
                       <ArrowLeft className="w-4 h-4" /> Back
                     </button>
                   </div>
@@ -631,8 +744,8 @@ export default function Booking() {
                     </div>
                   )}
                   <div className="text-center mt-6">
-                    <button onClick={() => setStep(2)} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
-                      <ArrowLeft className="w-4 h-4" /> Back
+                    <button onClick={handleReleaseHolds} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto">
+                      <ArrowLeft className="w-4 h-4" /> Back — change seats
                     </button>
                   </div>
                 </>
@@ -640,8 +753,8 @@ export default function Booking() {
             </div>
           )}
 
-          {/* ── STEP 4: Tickets ── */}
-          {step === 4 && bookings.length > 0 && (
+          {/* ── STEP 3: Tickets ── */}
+          {step === 3 && bookings.length > 0 && (
             <div>
               {showConfirmAlert && (
                 <div className="mb-6 flex items-center gap-3 border border-accent/50 bg-accent/10 rounded-sm px-5 py-4 animate-slide-up">
@@ -658,7 +771,6 @@ export default function Booking() {
                 </div>
               )}
 
-              {/* SMS delivery notice */}
               {bookings[0]?.delivery_method === "sms" && (
                 <div className="mb-6 flex items-start gap-3 border border-primary/30 bg-primary/5 rounded-sm px-5 py-4">
                   <MessageSquare className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
@@ -710,10 +822,10 @@ export default function Booking() {
   );
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── Sub-components ─────────────────────────────────────────────────────────────
 
 function Stepper({ step }) {
-  const steps = ["Details", "Delivery", "Payment", "Ticket"];
+  const steps = ["Details & Seats", "Payment", "Ticket"];
   return (
     <div className="flex items-center gap-2">
       {steps.map((s, i) => {
