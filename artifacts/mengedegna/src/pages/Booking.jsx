@@ -403,31 +403,6 @@ export default function Booking() {
                     <div className="bg-card border border-border rounded-sm p-8">
                       <h3 className="font-display font-bold text-xl mb-2">Passenger Details</h3>
                       <div className="space-y-6">
-                        {/* Lead passenger phone */}
-                        <div>
-                          <label className="font-mono text-[10px] tracking-[0.25em] text-primary block mb-2">
-                            {effectiveAgentMode ? "CUSTOMER PHONE NUMBER" : "TELEBIRR PHONE NUMBER"}
-                          </label>
-                          <div className="flex items-center border-b border-border focus-within:border-primary">
-                            <span className="text-muted-foreground font-mono py-3">+251</span>
-                            <input
-                              value={phone}
-                              onChange={(e) => {
-                                const val = e.target.value.replace(/\D/g, "").slice(0, 10);
-                                setPassengers((prev) => prev.map((p, i) => i === 0 ? { ...p, phone: val } : p));
-                              }}
-                              placeholder="9XX XXX XXX"
-                              inputMode="numeric"
-                              className="w-full bg-transparent py-3 px-2 focus:outline-none font-mono"
-                            />
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-2">
-                            {effectiveAgentMode
-                              ? "Customer's phone number for the ticket record."
-                              : "Payment push notification will be sent to this Telebirr-linked number."}
-                          </p>
-                        </div>
-
                         {/* Per-passenger first + last name */}
                         <div className="space-y-5">
                           <div className="font-mono text-[10px] tracking-[0.25em] text-primary">
@@ -474,6 +449,31 @@ export default function Booking() {
                               </div>
                             );
                           })}
+                        </div>
+
+                        {/* Lead passenger phone — below names since it's for payment/contact, not identity */}
+                        <div>
+                          <label className="font-mono text-[10px] tracking-[0.25em] text-primary block mb-2">
+                            {effectiveAgentMode ? "CUSTOMER PHONE NUMBER" : "PHONE NUMBER"}
+                          </label>
+                          <div className="flex items-center border-b border-border focus-within:border-primary">
+                            <span className="text-muted-foreground font-mono py-3">+251</span>
+                            <input
+                              value={phone}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                                setPassengers((prev) => prev.map((p, i) => i === 0 ? { ...p, phone: val } : p));
+                              }}
+                              placeholder="9XX XXX XXX"
+                              inputMode="numeric"
+                              className="w-full bg-transparent py-3 px-2 focus:outline-none font-mono"
+                            />
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            {effectiveAgentMode
+                              ? "Used for the ticket record and any follow-up contact."
+                              : "Used for your ticket record and Telebirr payment notification."}
+                          </p>
                         </div>
 
                         {geoChecked && isAbroad && (
