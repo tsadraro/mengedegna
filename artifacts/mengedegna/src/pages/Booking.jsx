@@ -345,13 +345,6 @@ export default function Booking() {
               <div className="grid lg:grid-cols-[1fr_280px] gap-8">
                 <div className="bg-card border border-border rounded-sm p-8">
                   <h3 className="font-display font-bold text-xl mb-2">Passenger Details</h3>
-                  <div className="flex items-start gap-2 mb-6 border border-border bg-secondary/40 rounded-sm px-4 py-3">
-                    <Armchair className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
-                    <div>
-                      <span className="font-mono text-[9px] tracking-[0.2em] text-primary font-bold">{SEATING_RULE.label.toUpperCase()} · </span>
-                      <span className="text-xs text-muted-foreground">{SEATING_RULE.description}</span>
-                    </div>
-                  </div>
                   <div className="space-y-6">
                     {/* Lead passenger phone — always shown first */}
                     <div>

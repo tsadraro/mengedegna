@@ -1,6 +1,6 @@
 // Enriched operator profile data for the operator showcase pages
 
-export const SEATING_RULE = {
+export const SEATING_RULE = { // kept for reference but no longer shown in the UI
   type: "FCFS",
   label: "First Come, First Served",
   description: "Seats are assigned in order of booking confirmation. The earlier you book, the lower your seat number. No seat selection — your seat is auto-assigned at the moment of payment.",
